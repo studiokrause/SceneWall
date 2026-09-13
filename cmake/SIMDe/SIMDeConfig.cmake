@@ -1,0 +1,2 @@
+set(SIMDe_FOUND TRUE)
+add_library(SIMDe::SIMDe INTERFACE IMPORTED)
