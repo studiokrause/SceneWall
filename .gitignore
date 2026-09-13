@@ -1,10 +1,12 @@
 build/
+.deps/
 *.o
 *.obj
 *.dll
 *.lib
 *.exp
 *.pdb
+*.zip
 .vs/
 CMakeFiles/
 CMakeCache.txt

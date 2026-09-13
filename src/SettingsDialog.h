@@ -1,17 +1,26 @@
 #pragma once
+
 #include <QDialog>
-#include <QTableWidget>
-#include <QPushButton>
-#include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QPushButton>
+#include <QTableWidget>
+#include <QVBoxLayout>
+
+#include "SceneWallConfig.h"
 
 class SettingsDialog : public QDialog {
-    Q_OBJECT
+	Q_OBJECT
 public:
-    SettingsDialog(QWidget *parent = nullptr);
-    void saveSettings();
-    void loadSettings();
+	explicit SettingsDialog(QWidget *parent = nullptr);
+
+private slots:
+	void saveSettings();
+	void pickColor(int row, int column);
+
 private:
-    QTableWidget *tabTable;
-    void addTabRow(const QString &name, const QString &color);
+	QTableWidget *tabTable;
+	SceneWallConfigData config;
+
+	void addTabRow(const QString &name, const QString &color, const QString &id, bool isAll);
+	void loadSettings();
 };

@@ -1,52 +1,71 @@
 #pragma once
+
 #include <QDockWidget>
-#include <QWidget>
-#include <QTimer>
+#include <QList>
 #include <QMouseEvent>
-#include <QTabWidget>
-#include <QSlider>
+#include <QPixmap>
 #include <QPushButton>
-#include <QLabel>
+#include <QSlider>
+#include <QTabWidget>
+#include <QTimer>
+#include <QWidget>
+
 #include <obs.h>
-#include <obs-audio-controls.h>
+
+#include "SceneWallConfig.h"
+
+class SceneTileWidget;
+class ToggleSwitch;
 
 class SceneThumbnailWidget : public QWidget {
-    Q_OBJECT
-    obs_source_t* source;
-    QTimer *refreshTimer;
-    QImage thumbnail;
-    bool realtime = false;
-    bool showAudio = false;
-    bool muted = false;
-    obs_volmeter_t *volmeter = nullptr;
-    int thumbSize = 160;
+	Q_OBJECT
 public:
-    SceneThumbnailWidget(obs_source_t* src, QWidget *parent = nullptr);
-    ~SceneThumbnailWidget();
-    void setRealtime(bool enable);
-    void setShowAudio(bool enable);
-    void setThumbSize(int size);
-    bool isCollapsed = false;
-    float audioLevel = 0.0f;
+	SceneThumbnailWidget(obs_source_t *src, QWidget *parent = nullptr);
+	~SceneThumbnailWidget() override;
+
+	void setThumbSize(int size);
+	void setThumbnail(const QPixmap &pixmap);
+	void setRealtime(bool enable);
+
+	bool realtime = false;
+
 protected:
-    void paintEvent(QPaintEvent *event) override;
-    void mousePressEvent(QMouseEvent *event) override;
+	void paintEvent(QPaintEvent *event) override;
+	void mousePressEvent(QMouseEvent *event) override;
+
 private slots:
-    void updateThumbnail();
-    void showContextMenu(const QPoint &pos);
+	void refreshState();
+
+private:
+	obs_source_t *source;
+	QTimer *stateTimer;
+	QPixmap thumbnail;
+	int thumbSize = 160;
 };
 
 class SceneWallWidget : public QDockWidget {
-    Q_OBJECT
+	Q_OBJECT
 public:
-    SceneWallWidget(QWidget *parent = nullptr);
+	SceneWallWidget(QWidget *parent = nullptr);
+
 private slots:
-    void openSettings();
+	void openSettings();
+	void onMenuRequested(SceneTileWidget *tile, const QPoint &globalPos);
+	void setAllRealtime(bool enable);
+	void autoSize();
+
 private:
-    QTabWidget *tabContainer;
-    QSlider *sizeSlider;
-    QPushButton *settingsBtn;
-    QPushButton *aboutBtn;
-    void loadTabs();
-    void rebuildScenes();
+	QTabWidget *tabContainer;
+	QSlider *sizeSlider;
+	QPushButton *autosizeBtn;
+	ToggleSwitch *realtimeToggle;
+	QPushButton *settingsBtn;
+	QList<SceneTileWidget *> tiles;
+
+	void loadTabs();
+	void applyThumbSize(int size);
+	void renameScene(SceneTileWidget *tile);
+	void duplicateScene(SceneTileWidget *tile);
+	void assignSceneToTab(SceneTileWidget *tile, const QString &tabName, bool isAllTab);
+	void rebuildLater();
 };

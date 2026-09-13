@@ -1,6 +1,7 @@
 #include <obs-module.h>
 #include <obs-frontend-api.h>
 #include "SceneWall.h"
+#include "ThumbnailManager.h"
 #include <QPointer>
 
 OBS_DECLARE_MODULE()
@@ -23,7 +24,9 @@ bool obs_module_load(void) {
 }
 
 void obs_module_unload(void) {
+    ThumbnailManager::instance().shutdown();
     if (sceneWall) {
         sceneWall->deleteLater();
+        sceneWall = nullptr;
     }
 }

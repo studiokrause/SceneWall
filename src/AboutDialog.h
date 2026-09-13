@@ -3,12 +3,17 @@
 #include <QLabel>
 #include <QVBoxLayout>
 #include <QTextEdit>
+#include "Locale.h"
+
+#ifndef SCENEWALL_VERSION
+#define SCENEWALL_VERSION "0.1"
+#endif
 
 class AboutDialog : public QDialog {
     Q_OBJECT
 public:
     AboutDialog(QWidget *parent = nullptr) : QDialog(parent) {
-        setWindowTitle("About SceneWall");
+        setWindowTitle(T("AboutTitle"));
         setFixedSize(400, 300);
         
         QVBoxLayout *layout = new QVBoxLayout(this);
@@ -21,7 +26,7 @@ public:
         title->setFont(font);
         layout->addWidget(title);
         
-        QLabel *version = new QLabel("Version 0.1", this);
+        QLabel *version = new QLabel(T("AboutVersion").arg(SCENEWALL_VERSION), this);
         version->setAlignment(Qt::AlignCenter);
         layout->addWidget(version);
         
@@ -48,7 +53,7 @@ public:
         );
         layout->addWidget(license);
         
-        QLabel *credits = new QLabel("Creator: studiokrause/OpenCode/Gemini 3.1", this);
+        QLabel *credits = new QLabel(T("AboutCreator") + ": studiokrause/OpenCode/Gemini 3.1", this);
         credits->setAlignment(Qt::AlignCenter);
         layout->addWidget(credits);
     }
