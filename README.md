@@ -1,6 +1,6 @@
 # SceneWall
 
-**SceneWall brings the vMix multiview idea to OBS Studio** — a dockable panel where every scene becomes a live thumbnail you can switch with a single click. It started as a port of vMix's source list, but it is not a clone: SceneWall adds features vMix's source list does not offer, such as fully user-defined tab groups with custom colors, per-scene headers, collapsible scene bars, a wrapping (flex-like) layout, one-click *Autosize*, and full localization.
+**SceneWall brings vMix's multiview / source list to OBS Studio** — a dockable panel where every scene becomes a live thumbnail you can switch with a single click. This is a port: the behaviour is copied from vMix's source list, so live thumbnails, tab groups with colors, scene headers, collapsible scene bars and the wrapping layout all work the way they do in vMix. The only things we added on top are the thumbnail **Size** slider and the one-click **Autosize**, which fit every scene into the available dock space.
 
 ![SceneWall docked in OBS Studio](scenewall_screenshot.jpg)
 
@@ -10,7 +10,7 @@
 
 SceneWall is a dock panel for OBS Studio. It shows all scenes of the current scene collection as live thumbnails, arranged in a wrapping grid that reflows to the width of the dock. It is meant as a fast, visual switcher for operators who work with many scenes (cameras, overlays, helpers) and want to see them all at once — similar to a video switcher's multiview.
 
-Unlike vMix's source list, SceneWall lets you organize scenes into **named tab groups with their own colors**, rename the special **All** tab, collapse individual scenes into compact vertical bars, and resize everything with one slider or a single *Autosize* click.
+Like vMix's source list, SceneWall lets you organize scenes into **named tab groups with their own colors**, rename the special **All** tab, and collapse individual scenes into compact vertical bars. The only additions over vMix are the thumbnail **Size** slider and the **Autosize** button.
 
 ## Features
 
