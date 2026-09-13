@@ -1,36 +1,19 @@
 # SceneWall
 
-**SceneWall brings vMix's multiview / source list to OBS Studio** — a dockable panel where every scene becomes a live thumbnail you can switch with a single click. This is a port: the behaviour is copied from vMix's source list, so live thumbnails, tab groups with colors, scene headers, collapsible scene bars and the wrapping layout all work the way they do in vMix. The only things we added on top are the thumbnail **Size** slider and the one-click **Autosize**, which fit every scene into the available dock space.
+**SceneWall brings the vMix multiview idea to OBS Studio** — a dockable panel where every scene becomes a live thumbnail you can switch with a single click.
 
 ![SceneWall docked in OBS Studio](scenewall_screenshot.jpg)
 
-> **Note about the screenshot:** the middle toolbar that normally sits between the *Preview* and *Program* views is not visible here, because the author runs the companion plugin **[studio-no-transition-strip](https://github.com/studiokrause/studio-no-transition-strip)**, which moves OBS's transition strip (Transition button, T-bar and quick transitions) into a movable dock.
+This is a port: the behaviour is copied from vMix's multiview / source list, so live thumbnails, tab groups with colors, scene headers, collapsible scene bars and the wrapping layout all work the way they do in vMix. The only additions over vMix are the thumbnail **Size** slider and the one-click **Autosize**, which fit every scene into the available dock space.
 
-## What it is
-
-SceneWall is a dock panel for OBS Studio. It shows all scenes of the current scene collection as live thumbnails, arranged in a wrapping grid that reflows to the width of the dock. It is meant as a fast, visual switcher for operators who work with many scenes (cameras, overlays, helpers) and want to see them all at once — similar to a video switcher's multiview.
-
-Like vMix's source list, SceneWall lets you organize scenes into **named tab groups with their own colors**, rename the special **All** tab, and collapse individual scenes into compact vertical bars. The only additions over vMix are the thumbnail **Size** slider and the **Autosize** button.
-
-## Features
-
-- **Live scene thumbnails** rendered by libobs, refreshed continuously.
-- **Wrapping layout** — thumbnails (and collapsed bars) reflow like a flex container when the dock is resized.
-- **Autosize** — computes the largest thumbnail size that still fits every scene in the visible dock area.
-- **Realtime mode** — optional high-frequency thumbnail refresh (with a resource-usage warning).
-- **Tab groups with colors** — create, rename, recolor and remove tabs; each tab's color is used for its scene headers and the tab button itself.
-- **Scene assignment** — assign any scene to a tab; assignments are stored by stable IDs, so renaming a tab never loses them.
-- **Scene headers** — every scene has a header with white text and a configurable background color; right-click it to collapse the scene into a vertical bar (click the bar to expand again).
-- **Program / Preview indicators** — red frame for the current Program scene, green frame for the current Preview scene in Studio Mode.
-- **Combined context menu** — OBS scene actions and SceneWall actions in one menu, opened with **CTRL + click**.
-- **Localization** — English, German, Polish, Ukrainian, Italian, Spanish and French, following OBS's interface language.
+> **Note about the screenshot:** the middle toolbar that normally sits between the *Preview* and *Program* views is not visible here, because I use my other plugin **[studio-no-transition-strip](https://github.com/studiokrause/studio-no-transition-strip)**, which moves OBS's transition strip (Transition button, T-bar and quick transitions) into a movable dock.
 
 ## Using SceneWall
 
 ### Mouse and keyboard
 
 - **Left click** on a thumbnail — switch to that scene (set it as the current Program scene).
-- **Right click (PPM)** on a thumbnail — in **Studio Mode** sets the scene as the Preview scene. Outside Studio Mode it does nothing, so a plain right-click never opens a menu.
+- **Right click (RMB / PPM)** on a thumbnail — in **Studio Mode** sets the scene as the Preview scene. Outside Studio Mode it does nothing, so a plain right-click never opens a menu.
 - **CTRL + click** on a thumbnail — opens the **combined context menu**:
   - *Rename...*, *Duplicate*, *Remove* — standard scene operations.
   - *Filters*, *Properties* — open the scene's filters and properties.
@@ -57,6 +40,19 @@ The **Realtime** toggle switches thumbnails to a high refresh rate. Because this
 ### Scene headers and bars
 
 Each thumbnail has a header showing the scene name in white on the tab's color. Right-clicking the header collapses the scene into a slim vertical bar (with the name rotated); clicking the bar expands it again. This is handy for keeping rarely used scenes around without wasting space.
+
+## Features
+
+- **Live scene thumbnails** rendered by libobs, refreshed continuously.
+- **Wrapping layout** — thumbnails (and collapsed bars) reflow like a flex container when the dock is resized.
+- **Autosize** — computes the largest thumbnail size that still fits every scene in the visible dock area.
+- **Realtime mode** — optional high-frequency thumbnail refresh (with a resource-usage warning).
+- **Tab groups with colors** — create, rename, recolor and remove tabs; each tab's color is used for its scene headers and the tab button itself.
+- **Scene assignment** — assign any scene to a tab; assignments are stored by stable IDs, so renaming a tab never loses them.
+- **Scene headers** — every scene has a header with white text and a configurable background color; right-click it to collapse the scene into a vertical bar (click the bar to expand again).
+- **Program / Preview indicators** — red frame for the current Program scene, green frame for the current Preview scene in Studio Mode.
+- **Combined context menu** — OBS scene actions and SceneWall actions in one menu, opened with **CTRL + click**.
+- **Localization** — English, German, Polish, Ukrainian, Italian, Spanish and French, following OBS's interface language.
 
 ## Installation
 
@@ -98,6 +94,5 @@ SceneWall is **free and open-source software (FOSS)**, released under the **MIT 
 
 ## Credits
 
-- Author: **studiokrause**
-- Development assisted by AI models (OpenCode, Gemini).
-- Companion plugin: [studio-no-transition-strip](https://github.com/studiokrause/studio-no-transition-strip).
+- Author: **studiokrause / deepseek-v4 / Google Gemini / OpenCode & CommandCode**
+- Companion plugin: [studio-no-transition-strip](https://github.com/studiokrause/studio-no-transition-strip)
