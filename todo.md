@@ -9,3 +9,4 @@
 - [x] Funkcje zaawansowane (Audio, Mute, CTRL+Click)
 - [x] Wielojęzyczność i About
 - [x] Automatyzacja wydania (ZIP, GitHub Releases)
+- [x] Zmiana kolejności scen przez przeciąganie (niezależna per zakładka)

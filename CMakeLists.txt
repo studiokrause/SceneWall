@@ -20,6 +20,8 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets)
 add_library(SceneWall MODULE
     src/plugin-main.cpp
     src/SceneWall.cpp
+    src/SceneGridWidget.cpp
+    src/SceneGridWidget.h
     src/SettingsDialog.cpp
     src/AboutDialog.h
 )

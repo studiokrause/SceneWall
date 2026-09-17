@@ -26,11 +26,16 @@ public:
     void setRealtime(bool enable);
     void setShowAudio(bool enable);
     void setThumbSize(int size);
+    QString sceneName() const;
     bool isCollapsed = false;
     float audioLevel = 0.0f;
+    QPoint dragStartPos;
+    bool dragStarted = false;
 protected:
     void paintEvent(QPaintEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
 private slots:
     void updateThumbnail();
     void showContextMenu(const QPoint &pos);
@@ -42,6 +47,7 @@ public:
     SceneWallWidget(QWidget *parent = nullptr);
 private slots:
     void openSettings();
+    void onOrderChanged(const QString &tabId, const QStringList &names);
 private:
     QTabWidget *tabContainer;
     QSlider *sizeSlider;

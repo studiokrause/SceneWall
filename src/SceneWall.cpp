@@ -1,6 +1,10 @@
 #include "SceneWall.h"
+#include "SceneGridWidget.h"
 #include "SettingsDialog.h"
 #include "AboutDialog.h"
+#include <QApplication>
+#include <QDrag>
+#include <QMimeData>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -17,6 +21,7 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QSet>
 #include <QFile>
 #include <QStandardPaths>
 #include <QDir>
@@ -79,6 +84,10 @@ void SceneThumbnailWidget::setThumbSize(int size) {
     thumbSize = size;
     setFixedSize(thumbSize, thumbSize * 9 / 16);
     update();
+}
+
+QString SceneThumbnailWidget::sceneName() const {
+    return QString(obs_source_get_name(source));
 }
 
 void SceneThumbnailWidget::updateThumbnail() {
@@ -200,7 +209,8 @@ void SceneThumbnailWidget::mousePressEvent(QMouseEvent *event) {
         
         menu.exec(event->globalPos());
     } else if (event->button() == Qt::LeftButton) {
-        obs_frontend_set_current_scene(source);
+        dragStartPos = event->position().toPoint();
+        dragStarted = false;
     } else if (event->button() == Qt::RightButton) {
         if (studioMode) {
             obs_frontend_set_current_preview_scene(source);
@@ -208,6 +218,37 @@ void SceneThumbnailWidget::mousePressEvent(QMouseEvent *event) {
             showContextMenu(event->pos());
         }
     }
+}
+
+void SceneThumbnailWidget::mouseMoveEvent(QMouseEvent *event) {
+    if (dragStarted || !(event->buttons() & Qt::LeftButton))
+        return;
+    if (event->modifiers() & Qt::ControlModifier)
+        return;
+    if (showAudio && dragStartPos.x() <= 12)
+        return;
+    if ((event->position().toPoint() - dragStartPos).manhattanLength() < QApplication::startDragDistance())
+        return;
+
+    dragStarted = true;
+
+    QMimeData *mime = new QMimeData;
+    mime->setData(kSceneMimeType, sceneName().toUtf8());
+    mime->setText(sceneName());
+
+    QDrag *drag = new QDrag(this);
+    drag->setMimeData(mime);
+    drag->setPixmap(grab().scaled(160, 90, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    drag->exec(Qt::MoveAction);
+}
+
+void SceneThumbnailWidget::mouseReleaseEvent(QMouseEvent *event) {
+    if (event->button() == Qt::LeftButton && !dragStarted &&
+        !(event->modifiers() & Qt::ControlModifier) &&
+        !(showAudio && dragStartPos.x() <= 12)) {
+        obs_frontend_set_current_scene(source);
+    }
+    dragStarted = false;
 }
 
 void SceneThumbnailWidget::showContextMenu(const QPoint &pos) {
@@ -266,10 +307,58 @@ SceneWallWidget::SceneWallWidget(QWidget *parent) : QDockWidget(parent) {
     setWidget(content);
 }
 
-QString getCfgPath() {
+QString getCfgDir() {
     QString path = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/obs-studio/plugin_config/SceneWall/";
     QDir().mkpath(path);
-    return path + "tabs.json";
+    return path;
+}
+
+QString getCfgPath() {
+    return getCfgDir() + "tabs.json";
+}
+
+QString getOrderPath() {
+    return getCfgDir() + "tab_order.json";
+}
+
+static QJsonObject loadSceneOrder() {
+    QFile file(getOrderPath());
+    if (file.exists() && file.open(QIODevice::ReadOnly)) {
+        QJsonObject order = QJsonDocument::fromJson(file.readAll()).object();
+        file.close();
+        return order;
+    }
+    return QJsonObject();
+}
+
+static QList<obs_source_t *> applySceneOrder(struct obs_frontend_source_list *scenes, const QJsonArray &saved) {
+    QList<obs_source_t *> ordered;
+    QSet<QString> placed;
+
+    for (const auto &value : saved) {
+        const QString name = value.toString();
+        if (placed.contains(name))
+            continue;
+        for (size_t i = 0; i < scenes->sources.num; i++) {
+            obs_source_t *src = scenes->sources.array[i];
+            if (name == obs_source_get_name(src)) {
+                ordered.append(src);
+                placed.insert(name);
+                break;
+            }
+        }
+    }
+
+    for (size_t i = 0; i < scenes->sources.num; i++) {
+        obs_source_t *src = scenes->sources.array[i];
+        const QString name = obs_source_get_name(src);
+        if (!placed.contains(name)) {
+            ordered.append(src);
+            placed.insert(name);
+        }
+    }
+
+    return ordered;
 }
 
 void SceneWallWidget::loadTabs() {
@@ -288,35 +377,27 @@ void SceneWallWidget::loadTabs() {
         tabs.append(allTab);
     }
 
+    const QJsonObject order = loadSceneOrder();
+
+    struct obs_frontend_source_list scenes = {};
+    obs_frontend_get_scenes(&scenes);
+
     for (const auto& val : tabs) {
         QJsonObject tabObj = val.toObject();
-        
+        const QString tabName = tabObj["name"].toString();
+
         QScrollArea *scroll = new QScrollArea();
         scroll->setWidgetResizable(true);
-        QWidget *tab = new QWidget();
-        QGridLayout *tabLayout = new QGridLayout(tab);
-        tabLayout->setSpacing(4);
-        
-        struct obs_frontend_source_list scenes = {};
-        obs_frontend_get_scenes(&scenes);
-        int col = 0;
-        int row = 0;
-        int maxCols = 4;
-        for (size_t i = 0; i < scenes.sources.num; i++) {
-            SceneThumbnailWidget *w = new SceneThumbnailWidget(scenes.sources.array[i], tab);
-            w->setThumbSize(sizeSlider->value());
-            tabLayout->addWidget(w, row, col);
-            col++;
-            if (col >= maxCols) {
-                col = 0;
-                row++;
-            }
-        }
-        obs_frontend_source_list_free(&scenes);
-        
-        scroll->setWidget(tab);
-        tabContainer->addTab(scroll, tabObj["name"].toString());
+
+        SceneGridWidget *grid = new SceneGridWidget(tabName, sizeSlider->value(), scroll);
+        grid->setScenes(applySceneOrder(&scenes, order.value(tabName).toArray()));
+        connect(grid, &SceneGridWidget::orderChanged, this, &SceneWallWidget::onOrderChanged);
+
+        scroll->setWidget(grid);
+        tabContainer->addTab(scroll, tabName);
     }
+
+    obs_frontend_source_list_free(&scenes);
 }
 
 void SceneWallWidget::openSettings() {
@@ -324,4 +405,23 @@ void SceneWallWidget::openSettings() {
     if (dialog.exec() == QDialog::Accepted) {
         loadTabs();
     }
+}
+
+void SceneWallWidget::rebuildScenes() {
+    loadTabs();
+}
+
+void SceneWallWidget::onOrderChanged(const QString &tabId, const QStringList &names) {
+    QJsonObject order = loadSceneOrder();
+    order[tabId] = QJsonArray::fromStringList(names);
+
+    const QString target = getOrderPath();
+    QFile tmp(target + ".tmp");
+    if (!tmp.open(QIODevice::WriteOnly))
+        return;
+    tmp.write(QJsonDocument(order).toJson());
+    tmp.close();
+
+    QFile::remove(target);
+    tmp.rename(target);
 }

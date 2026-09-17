@@ -16,6 +16,7 @@ SceneWall is a dockable multiview panel for OBS Studio, offering functionality s
 - Audio meter bars with mute functionality
 - Collapsible scene headers (vertical bar mode)
 - Multi-language support: English, German, Polish, Ukrainian, Italian, Spanish, French
+- Drag-and-drop scene reordering, remembered independently for each tab
 
 ## Installation
 1. Copy `SceneWall.dll` to `OBS_FOLDER/obs-plugins/64bit/`
@@ -28,4 +29,4 @@ MIT License
 studiokrause/OpenCode/Gemini 3.1
 
 ## Version
-0.1
+0.2
