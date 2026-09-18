@@ -32,7 +32,7 @@ Unlike vMix's source list, SceneWall lets you organize scenes into **named tab g
 ### Scene headers and indicators
 
 - **Scene headers** with white text on a configurable background color. Right-click a header to collapse the scene into a slim vertical bar; right-click again to expand it.
-- **Program (red) and Preview (green) indicators** — red frame for the current Program scene, green frame for the current Preview scene in Studio Mode.
+- **Thumbnail frames** — every thumbnail is outlined with a thin 1px grey frame so scenes are visually separated. The active scene stands out with a thicker frame: red for the current Program scene, green for the current Preview scene in Studio Mode.
 - **Localization** — English, German, Polish, Ukrainian, Italian, Spanish and French. The default title of the **All** tab is translated too.
 
 ## Mouse and keyboard
@@ -70,6 +70,10 @@ cmake --build build --config Release
 ```
 
 The resulting `build/Release/SceneWall.dll` is the plugin.
+
+## Version
+
+The current version is **1.2**.
 
 ## License
 
