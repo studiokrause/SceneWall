@@ -363,7 +363,7 @@ void SceneThumbnailWidget::paintEvent(QPaintEvent *event)
     // Program and thicker green in Preview, so the active scene stands out.
     // The colours come from flags cached by SceneWallWidget, so no OBS
     // frontend API call happens during painting.
-    QColor frameColor(128, 128, 128);
+    QColor frameColor(64, 64, 64);
     int frameWidth = 1;
     if (isProgram) {
         frameColor = QColor(255, 0, 0);
