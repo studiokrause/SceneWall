@@ -81,7 +81,7 @@ The resulting `build/Release/SceneWall.dll` is the plugin.
 
 ## Version
 
-The current version is **1.2**.
+The current version is **1.3**.
 
 ## License
 

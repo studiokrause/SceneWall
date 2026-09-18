@@ -87,7 +87,7 @@ public:
         title->setFont(font);
         layout->addWidget(title);
 
-        QLabel *version = new QLabel("Version 1.2", this);
+        QLabel *version = new QLabel("Version 1.3", this);
         version->setAlignment(Qt::AlignCenter);
         layout->addWidget(version);
 
