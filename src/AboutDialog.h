@@ -24,6 +24,10 @@ them all at once.
 
 FEATURES
 - Live scene thumbnails rendered through the OBS graphics subsystem.
+- Full grabbing of all sources - every thumbnail keeps its scene showing
+  (the same obs_source_inc_showing mechanism the native Multiview uses),
+  so game capture, display/window capture, browser and media sources stay
+  live even when the scene is neither in Preview nor Program.
 - Wrapping layout - thumbnails and collapsed bars reflow like a flex container.
 - Autosize - computes the largest size that fits every scene of the current tab
   in the visible area, then applies it to all tabs. Collapsed bars count as
