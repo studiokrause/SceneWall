@@ -25,6 +25,7 @@ Everything below mirrors vMix's source list. The three items marked **(added by 
 ### Thumbnails and layout
 
 - **Live scene thumbnails** rendered through the OBS graphics subsystem.
+- **Full grabbing of all sources** — every thumbnail keeps its scene showing (the same `obs_source_inc_showing` mechanism the native Multiview uses), so game capture, display/window capture, browser and media sources stay live even when the scene is neither in Preview nor Program.
 - **Wrapping layout** — thumbnails and collapsed bars reflow like a flex container when the dock is resized.
 - **Autosize** **(added by SceneWall)** — computes the largest size that fits every scene of the current tab in the visible area, then applies it to all tabs. Collapsed bars count as narrower, so packing stays efficient.
 - **Realtime mode** **(added by SceneWall)** — refreshes at the frame rate OBS is currently running at, after a resource-usage confirmation.
@@ -81,7 +82,7 @@ The resulting `build/Release/SceneWall.dll` is the plugin.
 
 ## Version
 
-The current version is **1.2**.
+The current version is **1.3**.
 
 ## License
 

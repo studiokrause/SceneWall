@@ -34,6 +34,13 @@
 SceneThumbnailWidget::SceneThumbnailWidget(obs_source_t *src, QWidget *parent)
     : QWidget(parent), source(obs_source_get_ref(src))
 {
+    // Port of native Multiview (frontend/components/Multiview.cpp):
+    // Multiview calls obs_source_inc_showing() for every scene it shows so
+    // game/screen-capture, browser etc. stay active and renderable even when
+    // the scene is neither in Preview nor Program. Without this,
+    // obs_source_video_render() below returns black for inactive scenes.
+    obs_source_inc_showing(source);
+
     applySize();
 
     // Each thumbnail owns its own timer so that every one renders at the
@@ -60,6 +67,8 @@ SceneThumbnailWidget::~SceneThumbnailWidget()
         texrender = nullptr;
     }
 
+    // Balance the inc_showing from the constructor (see Multiview::~Multiview).
+    obs_source_dec_showing(source);
     obs_source_release(source);
 }
 
