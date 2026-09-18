@@ -6,7 +6,6 @@
 
 #include <QColor>
 #include <QDockWidget>
-#include <QElapsedTimer>
 #include <QHideEvent>
 #include <QIcon>
 #include <QImage>
@@ -30,6 +29,7 @@
 class SceneThumbnailWidget : public QWidget {
     Q_OBJECT
     obs_source_t *source;
+    QTimer *refreshTimer;
     QImage thumbnail;
     int thumbSize = 160;
     QColor barColor = QColor(80, 80, 80);
@@ -40,11 +40,6 @@ class SceneThumbnailWidget : public QWidget {
     gs_stagesurf_t *stagesurf = nullptr;
     int stageW = 0;
     int stageH = 0;
-
-    // Rendering is driven by the wall's round-robin scheduler, not by a
-    // per-widget timer, so only one thumbnail is ever rendered per tick.
-    int refreshIntervalMs = 500;
-    qint64 lastRenderMs = -1;
 
     // Program / Preview state is pushed down by the wall instead of being
     // queried from OBS on every repaint.
@@ -61,10 +56,8 @@ public:
     void setCollapsed(bool collapsed);
     void setProgram(bool on);
     void setPreview(bool on);
-
-    // Round-robin scheduling helpers used by SceneWallWidget.
-    bool needsRender(qint64 nowMs) const;
-    void renderTick(qint64 nowMs);
+    void startTimer();
+    void stopTimer();
 
     QString sceneName() const;
     bool collapsed() const { return isCollapsed; }
@@ -84,6 +77,9 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     QSize sizeHint() const override;
+
+private slots:
+    void updateThumbnail();
 
 private:
     void applySize();
@@ -120,7 +116,7 @@ private slots:
     void onRealtimeToggled(bool on);
     void onCollapseToggled(const QString &sceneName, bool collapsed);
     void reloadFromObs();
-    void onRenderTick();
+    void updateIndicators();
 
 private:
     SceneTabWidget *tabContainer = nullptr;
@@ -134,12 +130,9 @@ private:
     // Collapse state survives tab rebuilds (e.g. saving Settings).
     QSet<QString> m_collapsedScenes;
 
-    // Round-robin renderer: one thumbnail per tick, so GPU work is spread
-    // across frames instead of spiking in a single one.
-    QTimer *m_renderTimer = nullptr;
+    // Cached list of live thumbnails (rebuilt by loadTabs) so indicator
+    // updates and size changes don't have to walk the widget tree.
     QList<SceneThumbnailWidget *> m_thumbWidgets;
-    int m_renderCursor = 0;
-    QElapsedTimer m_renderClock;
 
     void loadTabs();
     void reflowAll();
@@ -152,7 +145,6 @@ private:
     int computeAutosize() const;
 
     int realtimeIntervalMs() const;
-    void setRenderRunning(bool running);
-    void updateIndicators();
+    void setTimersRunning(bool running);
     void refreshGearIcon();
 };

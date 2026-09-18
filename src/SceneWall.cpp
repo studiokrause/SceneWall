@@ -2,7 +2,6 @@
 #include "SettingsDialog.h"
 
 #include <QDrag>
-#include <QElapsedTimer>
 #include <QEvent>
 #include <QFontMetrics>
 #include <QList>
@@ -36,10 +35,20 @@ SceneThumbnailWidget::SceneThumbnailWidget(obs_source_t *src, QWidget *parent)
     : QWidget(parent), source(obs_source_get_ref(src))
 {
     applySize();
+
+    // Each thumbnail owns its own timer so that every one renders at the
+    // requested rate. A shared round-robin scheduler was tried and reverted:
+    // rendering one thumbnail per tick meant each one only updated every
+    // N * tick, which visibly stuttered in Realtime mode.
+    refreshTimer = new QTimer(this);
+    connect(refreshTimer, &QTimer::timeout, this, &SceneThumbnailWidget::updateThumbnail);
+    refreshTimer->start(500); // 2 FPS
 }
 
 SceneThumbnailWidget::~SceneThumbnailWidget()
 {
+    refreshTimer->stop();
+
     if (texrender || stagesurf) {
         obs_enter_graphics();
         if (stagesurf)
@@ -75,7 +84,18 @@ void SceneThumbnailWidget::setBarColor(const QColor &color)
 
 void SceneThumbnailWidget::setRefreshInterval(int ms)
 {
-    refreshIntervalMs = ms;
+    refreshTimer->setInterval(ms);
+}
+
+void SceneThumbnailWidget::startTimer()
+{
+    if (!isCollapsed)
+        refreshTimer->start();
+}
+
+void SceneThumbnailWidget::stopTimer()
+{
+    refreshTimer->stop();
 }
 
 void SceneThumbnailWidget::setProgram(bool on)
@@ -94,16 +114,13 @@ void SceneThumbnailWidget::setPreview(bool on)
     }
 }
 
-bool SceneThumbnailWidget::needsRender(qint64 nowMs) const
+void SceneThumbnailWidget::updateThumbnail()
 {
-    if (isCollapsed || !isVisibleInViewport())
-        return false;
-    return lastRenderMs < 0 || (nowMs - lastRenderMs) >= refreshIntervalMs;
-}
+    // Skip the expensive GPU work for anything the user cannot actually see:
+    // hidden dock, another tab, or scrolled out of the viewport.
+    if (!isVisibleInViewport())
+        return;
 
-void SceneThumbnailWidget::renderTick(qint64 nowMs)
-{
-    lastRenderMs = nowMs;
     renderPreview();
     update();
 }
@@ -146,8 +163,10 @@ void SceneThumbnailWidget::setCollapsed(bool collapsed)
 
     isCollapsed = collapsed;
     if (isCollapsed) {
-        thumbnail = QImage();  // only the bar remains
-        lastRenderMs = -1;     // force a fresh render when expanded again
+        thumbnail = QImage(); // only the bar remains
+        refreshTimer->stop();
+    } else {
+        refreshTimer->start();
     }
     applySize();
     update();
@@ -493,15 +512,6 @@ SceneWallWidget::SceneWallWidget(QWidget *parent) : QDockWidget(parent)
     // every tab stays in sync without reopening the panel.
     obs_frontend_add_event_callback(onFrontendEvent, this);
 
-    // Single round-robin render scheduler: one thumbnail per tick, so the GPU
-    // work is spread over frames instead of spiking in a single one (which
-    // used to stall OBS's video thread).
-    m_renderClock.start();
-    m_renderTimer = new QTimer(this);
-    m_renderTimer->setInterval(16);
-    connect(m_renderTimer, &QTimer::timeout, this, &SceneWallWidget::onRenderTick);
-    m_renderTimer->start();
-
     loadTabs();
     updateIndicators();
 }
@@ -612,10 +622,8 @@ void SceneWallWidget::loadTabs()
     tabContainer->clear();
     tabContainer->sceneTabBar()->clearColors();
 
-    // Old widgets are gone (clear() deleted them) - drop stale pointers and
-    // reset the round-robin cursor so scheduling starts from a valid index.
+    // Old widgets are gone (clear() deleted them) - drop stale pointers.
     m_thumbWidgets.clear();
-    m_renderCursor = 0;
 
     struct obs_frontend_source_list scenes = {};
     obs_frontend_get_scenes(&scenes);
@@ -927,35 +935,13 @@ int SceneWallWidget::realtimeIntervalMs() const
     return qMax(1, (int)qRound(1000.0 / fps));
 }
 
-void SceneWallWidget::setRenderRunning(bool running)
+void SceneWallWidget::setTimersRunning(bool running)
 {
-    if (!m_renderTimer)
-        return;
-    if (running)
-        m_renderTimer->start();
-    else
-        m_renderTimer->stop();
-}
-
-void SceneWallWidget::onRenderTick()
-{
-    if (m_thumbWidgets.isEmpty())
-        return;
-
-    const qint64 now = m_renderClock.elapsed();
-    const int n = m_thumbWidgets.size();
-
-    // Round-robin: render at most one thumbnail per tick. Each widget only
-    // renders once its own interval has elapsed, so work is spread evenly
-    // over time instead of every widget firing in the same frame.
-    for (int i = 0; i < n; ++i) {
-        const int idx = (m_renderCursor + i) % n;
-        SceneThumbnailWidget *w = m_thumbWidgets.at(idx);
-        if (w && w->needsRender(now)) {
-            w->renderTick(now);
-            m_renderCursor = (idx + 1) % n;
-            return;
-        }
+    for (SceneThumbnailWidget *w : m_thumbWidgets) {
+        if (running)
+            w->startTimer();
+        else
+            w->stopTimer();
     }
 }
 
@@ -976,12 +962,12 @@ void SceneWallWidget::changeEvent(QEvent *event)
 void SceneWallWidget::showEvent(QShowEvent *event)
 {
     QDockWidget::showEvent(event);
-    setRenderRunning(true);
+    setTimersRunning(true);
 }
 
 void SceneWallWidget::hideEvent(QHideEvent *event)
 {
-    setRenderRunning(false);
+    setTimersRunning(false);
     QDockWidget::hideEvent(event);
 }
 
