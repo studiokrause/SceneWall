@@ -22,6 +22,11 @@ add_library(SceneWall MODULE
     src/SceneWall.cpp
     src/SettingsDialog.cpp
     src/AboutDialog.h
+    src/FlowLayout.h
+    src/Config.h
+    src/SceneContainer.h
+    src/SceneTabBar.h
+    src/ToggleSwitch.h
 )
 
 target_link_libraries(SceneWall PRIVATE obs.lib obs-frontend-api.lib Qt6::Widgets)
