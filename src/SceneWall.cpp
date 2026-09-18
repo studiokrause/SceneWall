@@ -2,6 +2,8 @@
 #include "SettingsDialog.h"
 
 #include <QDrag>
+#include <QElapsedTimer>
+#include <QEvent>
 #include <QFontMetrics>
 #include <QList>
 #include <QMap>
@@ -34,16 +36,10 @@ SceneThumbnailWidget::SceneThumbnailWidget(obs_source_t *src, QWidget *parent)
     : QWidget(parent), source(obs_source_get_ref(src))
 {
     applySize();
-
-    refreshTimer = new QTimer(this);
-    connect(refreshTimer, &QTimer::timeout, this, &SceneThumbnailWidget::updateThumbnail);
-    refreshTimer->start(500); // 2 FPS
 }
 
 SceneThumbnailWidget::~SceneThumbnailWidget()
 {
-    refreshTimer->stop();
-
     if (texrender || stagesurf) {
         obs_enter_graphics();
         if (stagesurf)
@@ -79,18 +75,37 @@ void SceneThumbnailWidget::setBarColor(const QColor &color)
 
 void SceneThumbnailWidget::setRefreshInterval(int ms)
 {
-    refreshTimer->setInterval(ms);
+    refreshIntervalMs = ms;
 }
 
-void SceneThumbnailWidget::startTimer()
+void SceneThumbnailWidget::setProgram(bool on)
 {
-    if (!isCollapsed)
-        refreshTimer->start();
+    if (isProgram != on) {
+        isProgram = on;
+        update();
+    }
 }
 
-void SceneThumbnailWidget::stopTimer()
+void SceneThumbnailWidget::setPreview(bool on)
 {
-    refreshTimer->stop();
+    if (isPreview != on) {
+        isPreview = on;
+        update();
+    }
+}
+
+bool SceneThumbnailWidget::needsRender(qint64 nowMs) const
+{
+    if (isCollapsed || !isVisibleInViewport())
+        return false;
+    return lastRenderMs < 0 || (nowMs - lastRenderMs) >= refreshIntervalMs;
+}
+
+void SceneThumbnailWidget::renderTick(qint64 nowMs)
+{
+    lastRenderMs = nowMs;
+    renderPreview();
+    update();
 }
 
 QSize SceneThumbnailWidget::previewSize() const
@@ -131,10 +146,8 @@ void SceneThumbnailWidget::setCollapsed(bool collapsed)
 
     isCollapsed = collapsed;
     if (isCollapsed) {
-        thumbnail = QImage(); // only the bar remains
-        refreshTimer->stop();
-    } else {
-        refreshTimer->start();
+        thumbnail = QImage();  // only the bar remains
+        lastRenderMs = -1;     // force a fresh render when expanded again
     }
     applySize();
     update();
@@ -151,17 +164,6 @@ void SceneThumbnailWidget::setCollapsed(bool collapsed)
         }
         p->updateGeometry();
     }
-}
-
-void SceneThumbnailWidget::updateThumbnail()
-{
-    // Skip the expensive GPU work for anything the user cannot actually see:
-    // hidden dock, another tab, or scrolled out of the viewport.
-    if (!isVisibleInViewport())
-        return;
-
-    renderPreview();
-    update();
 }
 
 bool SceneThumbnailWidget::isVisibleInViewport() const
@@ -215,11 +217,14 @@ bool SceneThumbnailWidget::renderAsyncFrame()
 
     bool ok = false;
     if (!img.isNull()) {
+        // Deep-copy into `thumbnail` BEFORE releasing the frame: `img` only
+        // wraps frame->data, which obs_source_release_frame may free.
         thumbnail = img.copy().scaled(previewSize(), Qt::KeepAspectRatio,
                                       Qt::SmoothTransformation);
         ok = !thumbnail.isNull();
     }
 
+    // Safe to release only after the deep copy above has completed.
     obs_source_release_frame(source, frame);
     return ok;
 }
@@ -335,25 +340,14 @@ void SceneThumbnailWidget::paintEvent(QPaintEvent *event)
             painter.drawImage(preview.topLeft(), thumbnail);
     }
 
-    // Program / preview indicators.
-    obs_source_t *currentScene = obs_frontend_get_current_scene();
-    if (currentScene) {
-        if (currentScene == source) {
-            painter.setPen(QPen(QColor(255, 0, 0), 3));
-            painter.drawRect(0, 0, width() - 1, height() - 1);
-        }
-        obs_source_release(currentScene);
-    }
-
-    if (obs_frontend_preview_program_mode_active()) {
-        obs_source_t *previewScene = obs_frontend_get_current_preview_scene();
-        if (previewScene) {
-            if (previewScene == source) {
-                painter.setPen(QPen(QColor(0, 255, 0), 3));
-                painter.drawRect(0, 0, width() - 1, height() - 1);
-            }
-            obs_source_release(previewScene);
-        }
+    // Program / Preview frames. These come from flags cached by
+    // SceneWallWidget, so no OBS frontend API call happens during painting.
+    if (isProgram) {
+        painter.setPen(QPen(QColor(255, 0, 0), 3));
+        painter.drawRect(0, 0, width() - 1, height() - 1);
+    } else if (isPreview) {
+        painter.setPen(QPen(QColor(0, 255, 0), 3));
+        painter.drawRect(0, 0, width() - 1, height() - 1);
     }
 }
 
@@ -400,6 +394,7 @@ void SceneThumbnailWidget::mouseMoveEvent(QMouseEvent *event)
     drag->setMimeData(mime);
     drag->setPixmap(grab());
     drag->exec(Qt::MoveAction);
+    drag->deleteLater();
 }
 
 /* ------------------------------------------------------------------ */
@@ -498,7 +493,17 @@ SceneWallWidget::SceneWallWidget(QWidget *parent) : QDockWidget(parent)
     // every tab stays in sync without reopening the panel.
     obs_frontend_add_event_callback(onFrontendEvent, this);
 
+    // Single round-robin render scheduler: one thumbnail per tick, so the GPU
+    // work is spread over frames instead of spiking in a single one (which
+    // used to stall OBS's video thread).
+    m_renderClock.start();
+    m_renderTimer = new QTimer(this);
+    m_renderTimer->setInterval(16);
+    connect(m_renderTimer, &QTimer::timeout, this, &SceneWallWidget::onRenderTick);
+    m_renderTimer->start();
+
     loadTabs();
+    updateIndicators();
 }
 
 SceneWallWidget::~SceneWallWidget()
@@ -512,12 +517,45 @@ void SceneWallWidget::onFrontendEvent(enum obs_frontend_event event, void *param
     if (!wall)
         return;
 
-    if (event == OBS_FRONTEND_EVENT_SCENE_LIST_CHANGED ||
-        event == OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED) {
+    switch (event) {
+    case OBS_FRONTEND_EVENT_SCENE_LIST_CHANGED:
+    case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED:
         // Queued: never rebuild while OBS is still handling its own event.
         QMetaObject::invokeMethod(wall, &SceneWallWidget::reloadFromObs,
                                   Qt::QueuedConnection);
+        break;
+    case OBS_FRONTEND_EVENT_SCENE_CHANGED:
+    case OBS_FRONTEND_EVENT_PREVIEW_SCENE_CHANGED:
+    case OBS_FRONTEND_EVENT_STUDIO_MODE_ENABLED:
+    case OBS_FRONTEND_EVENT_STUDIO_MODE_DISABLED:
+        // Only the Program/Preview highlight changed - no rebuild needed.
+        QMetaObject::invokeMethod(wall, &SceneWallWidget::updateIndicators,
+                                  Qt::QueuedConnection);
+        break;
+    default:
+        break;
     }
+}
+
+void SceneWallWidget::updateIndicators()
+{
+    // Query the frontend once here and push the result down to every
+    // thumbnail, instead of each one calling the API on every repaint.
+    obs_source_t *current = obs_frontend_get_current_scene();
+    obs_source_t *preview =
+            obs_frontend_preview_program_mode_active()
+                    ? obs_frontend_get_current_preview_scene()
+                    : nullptr;
+
+    for (SceneThumbnailWidget *w : m_thumbWidgets) {
+        w->setProgram(current && w->sourcePointer() == current);
+        w->setPreview(preview && w->sourcePointer() == preview);
+    }
+
+    if (current)
+        obs_source_release(current);
+    if (preview)
+        obs_source_release(preview);
 }
 
 void SceneWallWidget::reloadFromObs()
@@ -532,12 +570,6 @@ QString SceneWallWidget::currentTabId() const
     if (i < 0 || i >= config.tabs.size())
         return QString();
     return config.tabs[i].id;
-}
-
-SceneContainer *SceneWallWidget::currentContainer() const
-{
-    QScrollArea *scroll = qobject_cast<QScrollArea *>(tabContainer->currentWidget());
-    return scroll ? qobject_cast<SceneContainer *>(scroll->widget()) : nullptr;
 }
 
 void SceneWallWidget::refreshTabColors()
@@ -579,6 +611,11 @@ void SceneWallWidget::loadTabs()
     tabContainer->blockSignals(true);
     tabContainer->clear();
     tabContainer->sceneTabBar()->clearColors();
+
+    // Old widgets are gone (clear() deleted them) - drop stale pointers and
+    // reset the round-robin cursor so scheduling starts from a valid index.
+    m_thumbWidgets.clear();
+    m_renderCursor = 0;
 
     struct obs_frontend_source_list scenes = {};
     obs_frontend_get_scenes(&scenes);
@@ -633,6 +670,7 @@ void SceneWallWidget::loadTabs()
             connect(w, &SceneThumbnailWidget::collapseToggled, this,
                     &SceneWallWidget::onCollapseToggled);
             container->flowLayout()->addWidget(w);
+            m_thumbWidgets.append(w);
             // Keep bars collapsed across rebuilds (Settings save, assignment…).
             if (m_collapsedScenes.contains(name))
                 w->setCollapsed(true);
@@ -661,7 +699,7 @@ void SceneWallWidget::applyThumbSize(int size)
 {
     config.thumbSize = size;
     // One size for every tab; Autosize is only *computed* from the current tab.
-    for (SceneThumbnailWidget *w : findChildren<SceneThumbnailWidget *>())
+    for (SceneThumbnailWidget *w : m_thumbWidgets)
         w->setThumbSize(size);
     saveWallConfig(config);
 
@@ -876,7 +914,7 @@ void SceneWallWidget::onRealtimeToggled(bool on)
     saveWallConfig(config);
 
     const int ms = on ? realtimeIntervalMs() : 500;
-    for (SceneThumbnailWidget *w : findChildren<SceneThumbnailWidget *>())
+    for (SceneThumbnailWidget *w : m_thumbWidgets)
         w->setRefreshInterval(ms);
 }
 
@@ -889,25 +927,61 @@ int SceneWallWidget::realtimeIntervalMs() const
     return qMax(1, (int)qRound(1000.0 / fps));
 }
 
-void SceneWallWidget::setTimersRunning(bool running)
+void SceneWallWidget::setRenderRunning(bool running)
 {
-    for (SceneThumbnailWidget *w : findChildren<SceneThumbnailWidget *>()) {
-        if (running)
-            w->startTimer();
-        else
-            w->stopTimer();
+    if (!m_renderTimer)
+        return;
+    if (running)
+        m_renderTimer->start();
+    else
+        m_renderTimer->stop();
+}
+
+void SceneWallWidget::onRenderTick()
+{
+    if (m_thumbWidgets.isEmpty())
+        return;
+
+    const qint64 now = m_renderClock.elapsed();
+    const int n = m_thumbWidgets.size();
+
+    // Round-robin: render at most one thumbnail per tick. Each widget only
+    // renders once its own interval has elapsed, so work is spread evenly
+    // over time instead of every widget firing in the same frame.
+    for (int i = 0; i < n; ++i) {
+        const int idx = (m_renderCursor + i) % n;
+        SceneThumbnailWidget *w = m_thumbWidgets.at(idx);
+        if (w && w->needsRender(now)) {
+            w->renderTick(now);
+            m_renderCursor = (idx + 1) % n;
+            return;
+        }
     }
+}
+
+void SceneWallWidget::refreshGearIcon()
+{
+    if (settingsBtn)
+        settingsBtn->setIcon(makeGearIcon(palette().color(QPalette::ButtonText)));
+}
+
+void SceneWallWidget::changeEvent(QEvent *event)
+{
+    QDockWidget::changeEvent(event);
+    // Re-tint the gear when the OBS theme/palette changes.
+    if (event && event->type() == QEvent::PaletteChange)
+        refreshGearIcon();
 }
 
 void SceneWallWidget::showEvent(QShowEvent *event)
 {
     QDockWidget::showEvent(event);
-    setTimersRunning(true);
+    setRenderRunning(true);
 }
 
 void SceneWallWidget::hideEvent(QHideEvent *event)
 {
-    setTimersRunning(false);
+    setRenderRunning(false);
     QDockWidget::hideEvent(event);
 }
 

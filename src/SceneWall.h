@@ -6,6 +6,7 @@
 
 #include <QColor>
 #include <QDockWidget>
+#include <QElapsedTimer>
 #include <QHideEvent>
 #include <QIcon>
 #include <QImage>
@@ -29,18 +30,26 @@
 class SceneThumbnailWidget : public QWidget {
     Q_OBJECT
     obs_source_t *source;
-    QTimer *refreshTimer;
     QImage thumbnail;
     int thumbSize = 160;
     QColor barColor = QColor(80, 80, 80);
     QPoint dragStartPos;
-    bool dragStarted = false;
 
     // Reused GPU scratch buffers: allocating these per frame is expensive.
     gs_texrender_t *texrender = nullptr;
     gs_stagesurf_t *stagesurf = nullptr;
     int stageW = 0;
     int stageH = 0;
+
+    // Rendering is driven by the wall's round-robin scheduler, not by a
+    // per-widget timer, so only one thumbnail is ever rendered per tick.
+    int refreshIntervalMs = 500;
+    qint64 lastRenderMs = -1;
+
+    // Program / Preview state is pushed down by the wall instead of being
+    // queried from OBS on every repaint.
+    bool isProgram = false;
+    bool isPreview = false;
 
 public:
     SceneThumbnailWidget(obs_source_t *src, QWidget *parent = nullptr);
@@ -50,8 +59,12 @@ public:
     void setBarColor(const QColor &color);
     void setRefreshInterval(int ms);
     void setCollapsed(bool collapsed);
-    void startTimer();
-    void stopTimer();
+    void setProgram(bool on);
+    void setPreview(bool on);
+
+    // Round-robin scheduling helpers used by SceneWallWidget.
+    bool needsRender(qint64 nowMs) const;
+    void renderTick(qint64 nowMs);
 
     QString sceneName() const;
     bool collapsed() const { return isCollapsed; }
@@ -71,9 +84,6 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     QSize sizeHint() const override;
-
-private slots:
-    void updateThumbnail();
 
 private:
     void applySize();
@@ -98,6 +108,7 @@ public:
 protected:
     void showEvent(QShowEvent *event) override;
     void hideEvent(QHideEvent *event) override;
+    void changeEvent(QEvent *event) override;
 
 private slots:
     void openSettings();
@@ -109,6 +120,7 @@ private slots:
     void onRealtimeToggled(bool on);
     void onCollapseToggled(const QString &sceneName, bool collapsed);
     void reloadFromObs();
+    void onRenderTick();
 
 private:
     SceneTabWidget *tabContainer = nullptr;
@@ -122,17 +134,25 @@ private:
     // Collapse state survives tab rebuilds (e.g. saving Settings).
     QSet<QString> m_collapsedScenes;
 
+    // Round-robin renderer: one thumbnail per tick, so GPU work is spread
+    // across frames instead of spiking in a single one.
+    QTimer *m_renderTimer = nullptr;
+    QList<SceneThumbnailWidget *> m_thumbWidgets;
+    int m_renderCursor = 0;
+    QElapsedTimer m_renderClock;
+
     void loadTabs();
     void reflowAll();
     void syncWithObs(const QStringList &obsScenes);
     void refreshTabColors();
     QString currentTabId() const;
-    SceneContainer *currentContainer() const;
     void assignSceneToTab(const QString &sceneName, const QString &tabId);
     void removeSceneFromTab(const QString &sceneName, const QString &tabId);
     void moveSceneInTab(const QString &sceneName, int index);
     int computeAutosize() const;
 
     int realtimeIntervalMs() const;
-    void setTimersRunning(bool running);
+    void setRenderRunning(bool running);
+    void updateIndicators();
+    void refreshGearIcon();
 };

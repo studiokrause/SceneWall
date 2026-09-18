@@ -10,9 +10,9 @@
 #include <QDragMoveEvent>
 #include <QDropEvent>
 #include <QMimeData>
-#include <QPainter>
 #include <QPoint>
 #include <QRect>
+#include <QWidget>
 
 class SceneContainer : public QWidget {
     Q_OBJECT
@@ -24,6 +24,13 @@ public:
     {
         m_layout = new FlowLayout(this, 6, 6, 6);
         setAcceptDrops(true);
+
+        // The insertion marker is a raised child widget rather than something
+        // painted in paintEvent(): a parent paints before its children, so a
+        // painted marker would be covered by the thumbnails.
+        m_indicator = new QWidget(this);
+        m_indicator->setAttribute(Qt::WA_TransparentForMouseEvents);
+        m_indicator->hide();
     }
 
     FlowLayout *flowLayout() const { return m_layout; }
@@ -48,11 +55,7 @@ protected:
         }
     }
 
-    void dragLeaveEvent(QDragLeaveEvent *) override
-    {
-        m_dropIndex = -1;
-        update();
-    }
+    void dragLeaveEvent(QDragLeaveEvent *) override { hideIndicator(); }
 
     void dropEvent(QDropEvent *event) override
     {
@@ -62,53 +65,55 @@ protected:
         const QString name = QString::fromUtf8(event->mimeData()->data(MIME));
         const int index = computeDropIndex(event->position().toPoint());
 
-        m_dropIndex = -1;
-        update();
+        hideIndicator();
         event->acceptProposedAction();
 
         emit sceneDropped(name, index);
     }
 
-    void paintEvent(QPaintEvent *) override
+private:
+    void hideIndicator()
     {
-        if (m_dropIndex < 0)
-            return;
-
-        QPainter painter(this);
-        painter.setRenderHint(QPainter::Antialiasing, true);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(palette().color(QPalette::Highlight));
-
-        const int count = m_layout->count();
-        int x = 0;
-        int top = 6;
-        int bottom = height() - 6;
-
-        if (count == 0) {
-            x = 3;
-        } else if (m_dropIndex >= count) {
-            QRect last = m_layout->itemAt(count - 1)->geometry();
-            x = last.right() + 3;
-            top = last.top();
-            bottom = last.bottom();
-        } else {
-            QRect target = m_layout->itemAt(m_dropIndex)->geometry();
-            x = target.left() - 3;
-            top = target.top();
-            bottom = target.bottom();
-        }
-
-        painter.drawRect(QRect(x, top, 3, bottom - top));
+        m_dropIndex = -1;
+        if (m_indicator)
+            m_indicator->hide();
     }
 
-private:
     void updateIndicator(const QPoint &pos)
     {
         const int idx = computeDropIndex(pos);
-        if (idx != m_dropIndex) {
-            m_dropIndex = idx;
-            update();
+        if (idx == m_dropIndex)
+            return;
+        m_dropIndex = idx;
+
+        const int count = m_layout->count();
+        int x = 3;
+        int top = 6;
+        int bottom = height() - 6;
+
+        if (count > 0) {
+            if (m_dropIndex >= count) {
+                QRect last = m_layout->itemAt(count - 1)->geometry();
+                x = last.right() + 3;
+                top = last.top();
+                bottom = last.bottom();
+            } else {
+                QRect target = m_layout->itemAt(m_dropIndex)->geometry();
+                x = target.left() - 3;
+                top = target.top();
+                bottom = target.bottom();
+            }
         }
+
+        if (!m_indicator)
+            return;
+
+        m_indicator->setStyleSheet(
+                QString("background-color: %1;")
+                        .arg(palette().color(QPalette::Highlight).name()));
+        m_indicator->setGeometry(x, top, 3, bottom - top);
+        m_indicator->raise();
+        m_indicator->show();
     }
 
     int computeDropIndex(const QPoint &pos) const
@@ -131,5 +136,6 @@ private:
     }
 
     FlowLayout *m_layout = nullptr;
+    QWidget *m_indicator = nullptr;
     int m_dropIndex = -1;
 };

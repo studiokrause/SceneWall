@@ -98,9 +98,10 @@ void SettingsDialog::addTabRow(const TabConfig &tab)
     tabTable->setItem(row, 0, nameItem);
 
     QPushButton *pickBtn = new QPushButton(this);
-    // Fill the whole table cell so the swatch is easy to hit.
+    // Fill the whole table cell (24px row) so the swatch has no empty strip
+    // underneath and is easy to hit.
     pickBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    pickBtn->setMinimumHeight(20);
+    pickBtn->setMinimumHeight(24);
     pickBtn->setCursor(Qt::PointingHandCursor);
     pickBtn->setToolTip(obs_module_text("Color"));
     connect(pickBtn, &QPushButton::clicked, this,
