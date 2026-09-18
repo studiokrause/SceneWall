@@ -1,17 +1,23 @@
 #pragma once
+#include "Config.h"
+
+#include <QColor>
 #include <QDialog>
-#include <QTableWidget>
 #include <QPushButton>
-#include <QVBoxLayout>
-#include <QHBoxLayout>
+#include <QTableWidget>
 
 class SettingsDialog : public QDialog {
     Q_OBJECT
 public:
     SettingsDialog(QWidget *parent = nullptr);
-    void saveSettings();
-    void loadSettings();
+
 private:
     QTableWidget *tabTable;
-    void addTabRow(const QString &name, const QString &color);
+    WallConfig config;
+
+    void addTabRow(const TabConfig &tab);
+    void pickColorFor(QWidget *button);
+    void updateColorButton(QWidget *button, const QColor &color);
+    int rowOf(QWidget *button) const;
+    void saveSettings();
 };
