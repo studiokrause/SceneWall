@@ -359,16 +359,21 @@ void SceneThumbnailWidget::paintEvent(QPaintEvent *event)
             painter.drawImage(preview.topLeft(), thumbnail);
     }
 
-    // 1px frame around every thumbnail: grey by default, green in Preview and
-    // red in Program. The colours come from flags cached by SceneWallWidget,
-    // so no OBS frontend API call happens during painting.
+    // Frame around every thumbnail: thin grey by default, thicker red in
+    // Program and thicker green in Preview, so the active scene stands out.
+    // The colours come from flags cached by SceneWallWidget, so no OBS
+    // frontend API call happens during painting.
     QColor frameColor(128, 128, 128);
-    if (isProgram)
+    int frameWidth = 1;
+    if (isProgram) {
         frameColor = QColor(255, 0, 0);
-    else if (isPreview)
+        frameWidth = 3;
+    } else if (isPreview) {
         frameColor = QColor(0, 255, 0);
+        frameWidth = 3;
+    }
 
-    painter.setPen(QPen(frameColor, 1));
+    painter.setPen(QPen(frameColor, frameWidth));
     painter.drawRect(0, 0, width() - 1, height() - 1);
 }
 
