@@ -22,6 +22,7 @@
 #include <QWidget>
 
 #include <obs.h>
+#include <obs-frontend-api.h>
 #include <graphics/graphics.h>
 
 // One scene cell: coloured header bar on top plus the live preview below it.
@@ -89,6 +90,10 @@ class SceneWallWidget : public QDockWidget {
     Q_OBJECT
 public:
     SceneWallWidget(QWidget *parent = nullptr);
+    ~SceneWallWidget() override;
+
+    // Watches OBS for scenes being added, removed or renamed.
+    static void onFrontendEvent(enum obs_frontend_event event, void *param);
 
 protected:
     void showEvent(QShowEvent *event) override;
@@ -103,6 +108,7 @@ private slots:
     void onSceneMenu(SceneThumbnailWidget *widget, QPoint globalPos);
     void onRealtimeToggled(bool on);
     void onCollapseToggled(const QString &sceneName, bool collapsed);
+    void reloadFromObs();
 
 private:
     SceneTabWidget *tabContainer = nullptr;

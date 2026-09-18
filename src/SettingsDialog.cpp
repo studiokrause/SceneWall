@@ -28,6 +28,10 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent)
     tabTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
     tabTable->setColumnWidth(1, 56);
     tabTable->verticalHeader()->setVisible(false);
+    // Fixed, compact rows so the colour swatch fills the cell exactly and
+    // leaves no empty strip underneath.
+    tabTable->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+    tabTable->verticalHeader()->setDefaultSectionSize(24);
     // Only ever one tab selected at a time.
     tabTable->setSelectionMode(QAbstractItemView::SingleSelection);
     tabTable->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -123,7 +127,7 @@ void SettingsDialog::updateColorButton(QWidget *button, const QColor &color)
     // The button itself is the colour swatch; no hex text in the table.
     btn->setProperty("swatchColor", color);
     btn->setStyleSheet(QString("QPushButton { background-color: %1; border: 1px solid #666; "
-                               "border-radius: 3px; }")
+                               "border-radius: 3px; margin: 0; padding: 0; }")
                                .arg(color.name()));
 }
 

@@ -494,6 +494,35 @@ SceneWallWidget::SceneWallWidget(QWidget *parent) : QDockWidget(parent)
     connect(tabContainer->sceneTabBar(), &QTabBar::tabMoved, this,
             &SceneWallWidget::onTabMoved);
 
+    // Rebuild when OBS's own scene list changes (add / remove / rename), so
+    // every tab stays in sync without reopening the panel.
+    obs_frontend_add_event_callback(onFrontendEvent, this);
+
+    loadTabs();
+}
+
+SceneWallWidget::~SceneWallWidget()
+{
+    obs_frontend_remove_event_callback(onFrontendEvent, this);
+}
+
+void SceneWallWidget::onFrontendEvent(enum obs_frontend_event event, void *param)
+{
+    auto *wall = static_cast<SceneWallWidget *>(param);
+    if (!wall)
+        return;
+
+    if (event == OBS_FRONTEND_EVENT_SCENE_LIST_CHANGED ||
+        event == OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED) {
+        // Queued: never rebuild while OBS is still handling its own event.
+        QMetaObject::invokeMethod(wall, &SceneWallWidget::reloadFromObs,
+                                  Qt::QueuedConnection);
+    }
+}
+
+void SceneWallWidget::reloadFromObs()
+{
+    // loadTabs() re-runs syncWithObs(), so every tab picks up the new scene set.
     loadTabs();
 }
 
@@ -802,8 +831,15 @@ void SceneWallWidget::onSceneMenu(SceneThumbnailWidget *widget, QPoint globalPos
         QAction *a = assignMenu->addAction(t.name.isEmpty() ? t.id : t.name);
         a->setCheckable(true);
         a->setChecked(t.scenes.contains(name));
-        connect(a, &QAction::triggered, this,
-                [this, name, id = t.id]() { assignSceneToTab(name, id); });
+        // Clicking an already-assigned tab clears the assignment, so the
+        // checkbox can be unchecked again.
+        connect(a, &QAction::triggered, this, [this, name, id = t.id]() {
+            const int ti = config.indexOfTab(id);
+            if (ti >= 0 && config.tabs[ti].scenes.contains(name))
+                removeSceneFromTab(name, id);
+            else
+                assignSceneToTab(name, id);
+        });
     }
 
     if (ti >= 0 && !config.tabs[ti].isAll)
