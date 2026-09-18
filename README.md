@@ -1,6 +1,12 @@
 # SceneWall
 
-**SceneWall brings the vMix multiview idea to OBS Studio** — a dockable panel where every scene becomes a live thumbnail you can switch with a single click. It started as a port of vMix's source list, but it is not a clone: SceneWall adds features vMix's source list does not offer, such as fully user-defined tab groups with custom colors, per-scene headers, collapsible scene bars, a wrapping (flex-like) layout, one-click *Autosize*, drag & drop reordering, and full localization.
+**SceneWall is a port of vMix's source list to OBS Studio** — a dockable panel where every scene becomes a live thumbnail you can switch with a single click.
+
+All of the functionality is taken from vMix: live thumbnails, tab groups with colors, collapsible scene bars, a wrapping (flex-like) layout, Program/Preview indicators and the surrounding mouse interactions. SceneWall adds only three things of its own:
+
+- **Size / Autosize** — a thumbnail size slider plus one-click Autosize
+- **Realtime** — a toggle for high-frequency thumbnail refresh
+- **Naming and reordering tabs** — the ability to name tabs and change their order
 
 ![SceneWall docked in OBS Studio](scenewall_screenshot.png)
 
@@ -10,23 +16,25 @@
 
 A dock panel that shows the scenes of the current scene collection as live thumbnails in a wrapping grid that reflows to the width of the dock. Built for operators who work with many scenes (cameras, overlays, helpers) and want to see them all at once — similar to a video switcher's multiview.
 
-Unlike vMix's source list, SceneWall lets you organize scenes into **named tab groups with their own colors**, rename the special **All** tab, collapse individual scenes into compact vertical bars, reorder tabs and scenes by dragging, and resize everything with one slider or a single *Autosize* click.
+Scenes can be collapsed into compact vertical bars and the grid reflows as the dock is resized. On top of the vMix behaviour, the thumbnail size can be set with a slider or with a single *Autosize* click.
 
 ## Features
+
+Everything below mirrors vMix's source list. The three items marked **(added by SceneWall)** are the ones SceneWall contributes on top of the port.
 
 ### Thumbnails and layout
 
 - **Live scene thumbnails** rendered through the OBS graphics subsystem.
 - **Wrapping layout** — thumbnails and collapsed bars reflow like a flex container when the dock is resized.
-- **Autosize** — computes the largest size that fits every scene of the current tab in the visible area, then applies it to all tabs. Collapsed bars count as narrower, so packing stays efficient.
-- **Realtime mode** — refreshes at the frame rate OBS is currently running at, after a resource-usage confirmation.
+- **Autosize** **(added by SceneWall)** — computes the largest size that fits every scene of the current tab in the visible area, then applies it to all tabs. Collapsed bars count as narrower, so packing stays efficient.
+- **Realtime mode** **(added by SceneWall)** — refreshes at the frame rate OBS is currently running at, after a resource-usage confirmation.
 - **Optimized rendering** — GPU scratch buffers are allocated once per thumbnail and reused, and anything not actually visible (hidden dock, other tab, scrolled out of view) is skipped entirely.
 
 ### Tabs and scenes
 
 - **Tab groups with colors** used for the tab buttons and for the headers of the scenes assigned to them.
 - **Scene assignment** keyed by a **stable tab ID**, so renaming or reordering a tab never loses its scenes.
-- **Drag & drop reordering of tabs** — drag a tab button to a new position; the order is saved between sessions.
+- **Naming and reordering tabs** **(added by SceneWall)** — tabs can be named and their order changed by dragging a tab button to a new position; both are saved between sessions.
 - **Drag & drop reordering of scenes** — drag a thumbnail inside a tab to reorder it. Each tab keeps its own order, completely independent of the scene list in OBS. Saved between sessions.
 
 ### Scene headers and indicators
