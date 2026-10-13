@@ -842,24 +842,35 @@ int SceneWallWidget::computeAutosize() const
     if (!container)
         return config.thumbSize;
 
-    const QList<SceneThumbnailWidget *> widgets =
-            container->findChildren<SceneThumbnailWidget *>();
-    if (widgets.isEmpty())
+    FlowLayout *layout = container->flowLayout();
+    if (!layout || layout->count() == 0)
         return config.thumbSize;
 
     const int MIN = sizeSlider->minimum();
     const int MAX = sizeSlider->maximum();
+    const int margin = 6;
     const int spacing = 6;
-    const int usableW = avail.width() - 12;
+    const int usableW = avail.width() - 2 * margin;
+    const int usableH = avail.height() - 2 * margin;
 
     for (int s = MAX; s >= MIN; --s) {
         const int itemH = SceneThumbnailWidget::HEADER_HEIGHT + s * 9 / 16;
 
         int rows = 1;
         int rowW = 0;
-        for (SceneThumbnailWidget *w : widgets) {
+        bool fits = true;
+        for (int i = 0; i < layout->count(); ++i) {
+            QLayoutItem *item = layout->itemAt(i);
+            SceneThumbnailWidget *w =
+                    item ? qobject_cast<SceneThumbnailWidget *>(item->widget()) : nullptr;
+            if (!w)
+                continue;
             // A collapsed bar is much narrower than a full thumbnail.
             const int itemW = w->collapsed() ? SceneThumbnailWidget::COLLAPSED_WIDTH : s;
+            if (itemW > usableW) {
+                fits = false;
+                break;
+            }
             if (rowW > 0 && rowW + spacing + itemW > usableW) {
                 rows++;
                 rowW = 0;
@@ -868,7 +879,7 @@ int SceneWallWidget::computeAutosize() const
         }
 
         const int totalH = rows * itemH + (rows - 1) * spacing;
-        if (totalH <= avail.height())
+        if (fits && totalH <= usableH)
             return s;
     }
 
@@ -921,7 +932,37 @@ void SceneWallWidget::moveSceneInTab(const QString &sceneUuid, int index)
     list.insert(target, sceneUuid);
 
     persistConfig();
-    loadTabs();
+
+    QScrollArea *scroll = qobject_cast<QScrollArea *>(tabContainer->currentWidget());
+    SceneContainer *container =
+            scroll ? qobject_cast<SceneContainer *>(scroll->widget()) : nullptr;
+    if (!container)
+        return;
+
+    FlowLayout *layout = container->flowLayout();
+    QList<QLayoutItem *> items;
+    QMap<QString, QLayoutItem *> itemsByUuid;
+    while (layout->count() > 0) {
+        QLayoutItem *item = layout->takeAt(0);
+        items.append(item);
+        if (SceneThumbnailWidget *widget = qobject_cast<SceneThumbnailWidget *>(item->widget()))
+            itemsByUuid.insert(widget->sceneUuid(), item);
+    }
+
+    QList<QLayoutItem *> ordered;
+    for (const QString &uuid : list) {
+        if (QLayoutItem *item = itemsByUuid.value(uuid, nullptr)) {
+            layout->addItem(item);
+            ordered.append(item);
+        }
+    }
+    for (QLayoutItem *item : items)
+        if (!ordered.contains(item))
+            layout->addItem(item);
+
+    layout->invalidate();
+    layout->activate();
+    container->updateGeometry();
 }
 
 void SceneWallWidget::assignSceneToTab(const QString &sceneUuid, const QString &tabId)
@@ -1031,6 +1072,13 @@ void SceneWallWidget::onSchedulerTick()
 {
     if (m_thumbWidgets.isEmpty())
         return;
+
+    if (config.realtime) {
+        for (SceneThumbnailWidget *w : m_thumbWidgets)
+            if (w && !w->collapsed() && w->isVisible())
+                w->renderIfVisible();
+        return;
+    }
 
     // Cheap eligibility first: collapsed, hidden-tab and hidden-dock widgets
     // never consume GPU budget. The viewport clip is rechecked inside
