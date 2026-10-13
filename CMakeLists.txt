@@ -6,14 +6,19 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 
-# Configure OBS SDK locations
-set(OBS_SDK_DIR "D:/obs-hider/.deps/obs-sdk-installed")
+# Configure OBS SDK locations (no hardcoded paths)
+set(OBS_SDK_DIR "" CACHE PATH "Path to the installed OBS SDK")
+if(NOT OBS_SDK_DIR)
+    message(FATAL_ERROR "Set OBS_SDK_DIR to the installed OBS SDK, e.g. -DOBS_SDK_DIR=<sdk>")
+endif()
+
+set(OBS_QT_CMAKE_DIR "" CACHE PATH "Optional path to the Qt6 CMake package (lib/cmake/Qt6)")
+if(OBS_QT_CMAKE_DIR)
+    list(APPEND CMAKE_PREFIX_PATH "${OBS_QT_CMAKE_DIR}")
+endif()
 
 include_directories("${OBS_SDK_DIR}/include")
 link_directories("${OBS_SDK_DIR}/lib")
-
-# Add Qt6 location
-list(APPEND CMAKE_PREFIX_PATH "D:/obs-hider/.deps/obs-studio-32.2.2/.deps/obs-deps-qt6-2026-07-15-x64/lib/cmake/Qt6")
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
@@ -44,5 +49,9 @@ if(BUILD_TESTING)
     add_test(NAME SchedulerTest COMMAND SchedulerTest)
 endif()
 
-install(TARGETS SceneWall LIBRARY DESTINATION "obs-plugins/64bit")
+install(TARGETS SceneWall
+    RUNTIME DESTINATION "plugins/SceneWall"
+    LIBRARY DESTINATION "plugins/SceneWall")
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/data/locale"
+    DESTINATION "plugins/SceneWall/data")
 
