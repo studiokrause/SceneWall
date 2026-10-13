@@ -2,6 +2,7 @@
 #include "SettingsDialog.h"
 
 #include <QDrag>
+#include <QApplication>
 #include <QEvent>
 #include <QFontMetrics>
 #include <QList>
@@ -397,6 +398,7 @@ void SceneThumbnailWidget::mousePressEvent(QMouseEvent *event)
 {
     const QPoint pos = event->position().toPoint();
     dragStartPos = pos;
+    dragStarted = false;
 
     // CTRL+click opens the plugin menu (never the right button).
     if (event->modifiers() & Qt::ControlModifier) {
@@ -418,25 +420,41 @@ void SceneThumbnailWidget::mousePressEvent(QMouseEvent *event)
         return;
     }
 
-    if (event->button() == Qt::LeftButton)
-        obs_frontend_set_current_scene(source);
+    // Left press only arms a potential drag; Program switches on release.
 }
 
 void SceneThumbnailWidget::mouseMoveEvent(QMouseEvent *event)
 {
     if (!(event->buttons() & Qt::LeftButton))
         return;
-    if ((event->position().toPoint() - dragStartPos).manhattanLength() < 5)
+    if ((event->position().toPoint() - dragStartPos).manhattanLength() <
+        QApplication::startDragDistance())
         return;
 
-    // Left-drag reorders scenes inside the tab.
+    // Left-drag reorders scenes inside the tab (stable UUID, not the name,
+    // so duplicate scene names reorder the right item).
+    dragStarted = true;
     QDrag *drag = new QDrag(this);
     QMimeData *mime = new QMimeData;
-    mime->setData(SceneContainer::MIME, sceneName().toUtf8());
+    mime->setData(SceneContainer::MIME, sceneUuid().toUtf8());
     drag->setMimeData(mime);
     drag->setPixmap(grab());
     drag->exec(Qt::MoveAction);
     drag->deleteLater();
+}
+
+void SceneThumbnailWidget::mouseReleaseEvent(QMouseEvent *event)
+{
+    // Press already handled right button and CTRL+click; release only
+    // switches Program for a plain left click that never became a drag.
+    if (event->button() != Qt::LeftButton)
+        return;
+    if (event->modifiers() & Qt::ControlModifier)
+        return;
+    if (dragStarted)
+        return;
+
+    obs_frontend_set_current_scene(source);
 }
 
 /* ------------------------------------------------------------------ */
@@ -672,10 +690,17 @@ void SceneWallWidget::loadTabs()
 
     stopScheduler(); // never tick while widgets are being rebuilt
     tabContainer->blockSignals(true);
-    tabContainer->clear();
+    // QTabWidget::clear() only removes pages without deleting them, so
+    // destroy each page explicitly: deleting the scroll area deletes its
+    // SceneContainer and every thumbnail (dec_showing runs in each dtor).
+    while (tabContainer->count() > 0) {
+        QWidget *page = tabContainer->widget(0);
+        tabContainer->removeTab(0);
+        delete page;
+    }
     tabContainer->sceneTabBar()->clearColors();
 
-    // Old widgets are gone (clear() deleted them) - drop stale pointers.
+    // Old widgets are gone (deleted above) - drop stale pointers.
     m_thumbWidgets.clear();
 
     struct obs_frontend_source_list scenes = {};
@@ -866,16 +891,10 @@ void SceneWallWidget::onTabMoved(int from, int to)
     refreshTabColors();
 }
 
-void SceneWallWidget::onSceneDropped(const QString &sceneUuidOrName, int index)
+void SceneWallWidget::onSceneDropped(const QString &sceneUuid, int index)
 {
-    QString sceneUuid = sceneUuidOrName;
-    const int tabIndex = currentCollection().indexOfTab(currentTabId());
-    if (tabIndex >= 0 && !currentCollection().tabs[tabIndex].scenes.contains(sceneUuid))
-        for (SceneThumbnailWidget *widget : m_thumbWidgets)
-            if (widget->sceneName() == sceneUuidOrName) {
-                sceneUuid = widget->sceneUuid();
-                break;
-            }
+    // UUID-only: an unknown UUID is rejected inside moveSceneInTab without
+    // touching the config (fixes duplicate-name reorder).
     moveSceneInTab(sceneUuid, index);
 }
 

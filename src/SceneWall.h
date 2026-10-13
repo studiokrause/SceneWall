@@ -78,6 +78,7 @@ class SceneThumbnailWidget : public QWidget {
     int thumbSize = 160;
     QColor barColor = QColor(80, 80, 80);
     QPoint dragStartPos;
+    bool dragStarted = false;
 
     // Reused GPU scratch buffers: allocating these per frame is expensive.
     gs_texrender_t *texrender = nullptr;
@@ -119,6 +120,7 @@ protected:
     void paintEvent(QPaintEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
     QSize sizeHint() const override;
 
 private:
@@ -151,7 +153,7 @@ private slots:
     void applyThumbSize(int size);
     void runAutosize();
     void onTabMoved(int from, int to);
-    void onSceneDropped(const QString &sceneUuidOrName, int index);
+    void onSceneDropped(const QString &sceneUuid, int index);
     void onSceneMenu(SceneThumbnailWidget *widget, QPoint globalPos);
     void onRealtimeToggled(bool on);
     void onCollapseToggled(const QString &sceneUuid, bool collapsed);
