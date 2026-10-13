@@ -56,20 +56,13 @@ SceneThumbnailWidget::SceneThumbnailWidget(obs_source_t *src, QWidget *parent)
     obs_source_inc_showing(source);
 
     applySize();
-
-    // Each thumbnail owns its own timer so that every one renders at the
-    // requested rate. A shared round-robin scheduler was tried and reverted:
-    // rendering one thumbnail per tick meant each one only updated every
-    // N * tick, which visibly stuttered in Realtime mode.
-    refreshTimer = new QTimer(this);
-    connect(refreshTimer, &QTimer::timeout, this, &SceneThumbnailWidget::updateThumbnail);
-    refreshTimer->start(500); // 2 FPS
+    // No per-widget timer: the wall scheduler (one QTimer, round-robin,
+    // maxGpuReadsPerTick) calls renderIfVisible() so N scenes never run
+    // N independent full GPU readbacks per tick.
 }
 
 SceneThumbnailWidget::~SceneThumbnailWidget()
 {
-    refreshTimer->stop();
-
     if (texrender || stagesurf) {
         obs_enter_graphics();
         if (stagesurf)
@@ -110,22 +103,6 @@ void SceneThumbnailWidget::setBarColor(const QColor &color)
     update();
 }
 
-void SceneThumbnailWidget::setRefreshInterval(int ms)
-{
-    refreshTimer->setInterval(ms);
-}
-
-void SceneThumbnailWidget::startTimer()
-{
-    if (!isCollapsed)
-        refreshTimer->start();
-}
-
-void SceneThumbnailWidget::stopTimer()
-{
-    refreshTimer->stop();
-}
-
 void SceneThumbnailWidget::setProgram(bool on)
 {
     if (isProgram != on) {
@@ -142,7 +119,7 @@ void SceneThumbnailWidget::setPreview(bool on)
     }
 }
 
-void SceneThumbnailWidget::updateThumbnail()
+void SceneThumbnailWidget::renderIfVisible()
 {
     // Skip the expensive GPU work for anything the user cannot actually see:
     // hidden dock, another tab, or scrolled out of the viewport.
@@ -190,12 +167,8 @@ void SceneThumbnailWidget::setCollapsed(bool collapsed)
         return;
 
     isCollapsed = collapsed;
-    if (isCollapsed) {
+    if (isCollapsed)
         thumbnail = QImage(); // only the bar remains
-        refreshTimer->stop();
-    } else {
-        refreshTimer->start();
-    }
     applySize();
     update();
 
@@ -563,6 +536,11 @@ SceneWallWidget::SceneWallWidget(QWidget *parent) : QDockWidget(parent)
     // every tab stays in sync without reopening the panel.
     obs_frontend_add_event_callback(onFrontendEvent, this);
 
+    // One shared render timer for all thumbnails: each tick renders at most
+    // maxGpuReadsPerTick visible widgets round-robin (see onSchedulerTick).
+    m_renderTimer = new QTimer(this);
+    connect(m_renderTimer, &QTimer::timeout, this, &SceneWallWidget::onSchedulerTick);
+
     loadTabs();
     updateIndicators();
 }
@@ -692,6 +670,7 @@ void SceneWallWidget::loadTabs()
     m_collectionId = currentSceneCollectionKey();
     const int previousIndex = tabContainer->currentIndex();
 
+    stopScheduler(); // never tick while widgets are being rebuilt
     tabContainer->blockSignals(true);
     tabContainer->clear();
     tabContainer->sceneTabBar()->clearColors();
@@ -716,8 +695,6 @@ void SceneWallWidget::loadTabs()
 
     syncWithObs(obsSceneUuids, uuidsBySceneName);
     CollectionConfig &collection = currentCollection();
-
-    const int interval = config.realtime ? realtimeIntervalMs() : 500;
 
     // A scene's bar takes the colour of the tab it is assigned to, so the
     // owner stays recognisable even while browsing the "All" tab.
@@ -751,7 +728,6 @@ void SceneWallWidget::loadTabs()
             SceneThumbnailWidget *w = new SceneThumbnailWidget(sourcesByUuid.value(sceneUuid), container);
             w->setThumbSize(config.thumbSize);
             w->setBarColor(ownerColor.value(sceneUuid, allColor));
-            w->setRefreshInterval(interval);
             connect(w, &SceneThumbnailWidget::menuRequested, this, &SceneWallWidget::onSceneMenu);
             connect(w, &SceneThumbnailWidget::collapseToggled, this,
                     &SceneWallWidget::onCollapseToggled);
@@ -785,6 +761,7 @@ void SceneWallWidget::loadTabs()
     // never persist it over saved assignments.
     if (!obsSceneUuids.isEmpty())
         persistConfig();
+    startScheduler(); // no-op while the dock is hidden
 }
 
 void SceneWallWidget::applyThumbSize(int size)
@@ -1019,28 +996,52 @@ void SceneWallWidget::onRealtimeToggled(bool on)
     config.realtime = on;
     persistConfig();
 
-    const int ms = on ? realtimeIntervalMs() : 500;
-    for (SceneThumbnailWidget *w : m_thumbWidgets)
-        w->setRefreshInterval(ms);
+    // Apply the new rate to the shared timer; no modal here, the warning
+    // above already ran for the manual toggle (startup sets checked silent).
+    stopScheduler();
+    startScheduler();
 }
 
 int SceneWallWidget::realtimeIntervalMs() const
 {
     // Match the frame rate OBS is currently running at.
-    const double fps = obs_get_active_fps();
-    if (fps <= 0.0)
-        return 33;
-    return qMax(1, (int)qRound(1000.0 / fps));
+    return ThumbnailScheduler::realtimeIntervalForFps(obs_get_active_fps());
 }
 
-void SceneWallWidget::setTimersRunning(bool running)
+void SceneWallWidget::onSchedulerTick()
 {
-    for (SceneThumbnailWidget *w : m_thumbWidgets) {
-        if (running)
-            w->startTimer();
-        else
-            w->stopTimer();
+    if (m_thumbWidgets.isEmpty())
+        return;
+
+    // Cheap eligibility first: collapsed, hidden-tab and hidden-dock widgets
+    // never consume GPU budget. The viewport clip is rechecked inside
+    // renderIfVisible(), which performs the expensive work.
+    QList<bool> eligible;
+    eligible.reserve(m_thumbWidgets.size());
+    for (SceneThumbnailWidget *w : m_thumbWidgets)
+        eligible.append(w && !w->collapsed() && w->isVisible());
+
+    const QList<int> picked = m_schedule.pickNext(eligible);
+    for (int i : picked) {
+        if (SceneThumbnailWidget *w = m_thumbWidgets.value(i, nullptr))
+            w->renderIfVisible();
     }
+}
+
+void SceneWallWidget::startScheduler()
+{
+    if (!m_renderTimer || m_renderTimer->isActive() || m_thumbWidgets.isEmpty())
+        return;
+    if (!isVisible())
+        return; // showEvent resumes; hidden dock renders nothing
+    m_renderTimer->start(config.realtime ? realtimeIntervalMs()
+                                         : ThumbnailScheduler::NORMAL_INTERVAL_MS);
+}
+
+void SceneWallWidget::stopScheduler()
+{
+    if (m_renderTimer)
+        m_renderTimer->stop();
 }
 
 void SceneWallWidget::refreshGearIcon()
@@ -1060,12 +1061,12 @@ void SceneWallWidget::changeEvent(QEvent *event)
 void SceneWallWidget::showEvent(QShowEvent *event)
 {
     QDockWidget::showEvent(event);
-    setTimersRunning(true);
+    startScheduler(); // resume round-robin where it stopped; no budget lost
 }
 
 void SceneWallWidget::hideEvent(QHideEvent *event)
 {
-    setTimersRunning(false);
+    stopScheduler();
     QDockWidget::hideEvent(event);
 }
 
