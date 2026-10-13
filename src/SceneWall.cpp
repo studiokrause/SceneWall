@@ -22,10 +22,24 @@
 #include <obs-module.h>
 #include <obs.h>
 #include <obs-source.h>
+#include <util/bmem.h>
 #include <util/c99defs.h>
 #include <media-io/video-io.h>
 #include <graphics/graphics.h>
 #include <graphics/vec4.h>
+
+QString currentSceneCollectionKey()
+{
+    char *collection = obs_frontend_get_current_scene_collection();
+    const QString key = collection ? QString::fromUtf8(collection) : QString();
+    bfree(collection);
+    return key;
+}
+
+WallConfig loadWallConfig()
+{
+    return loadWallConfig(getCfgPath(), currentSceneCollectionKey());
+}
 
 /* ------------------------------------------------------------------ */
 /* SceneThumbnailWidget                                                */
@@ -75,6 +89,11 @@ SceneThumbnailWidget::~SceneThumbnailWidget()
 QString SceneThumbnailWidget::sceneName() const
 {
     return QString(obs_source_get_name(source));
+}
+
+QString SceneThumbnailWidget::sceneUuid() const
+{
+    return QString(obs_source_get_uuid(source));
 }
 
 void SceneThumbnailWidget::setThumbSize(int size)
@@ -180,7 +199,7 @@ void SceneThumbnailWidget::setCollapsed(bool collapsed)
     applySize();
     update();
 
-    emit collapseToggled(sceneName(), isCollapsed);
+    emit collapseToggled(sceneUuid(), isCollapsed);
 
     // Re-wrap the flow layout around the new item size. Never call
     // adjustSize() here: it would resize the container to its sizeHint (one
@@ -476,6 +495,7 @@ static QIcon makeGearIcon(const QColor &color, int size = 18)
 SceneWallWidget::SceneWallWidget(QWidget *parent) : QDockWidget(parent)
 {
     setWindowTitle("SceneWall");
+    m_collectionId = currentSceneCollectionKey();
     config = loadWallConfig();
 
     QWidget *content = new QWidget(this);
@@ -590,48 +610,61 @@ void SceneWallWidget::reloadFromObs()
     loadTabs();
 }
 
+CollectionConfig &SceneWallWidget::currentCollection()
+{
+    return config.ensureCollection(m_collectionId);
+}
+
 QString SceneWallWidget::currentTabId() const
 {
     const int i = tabContainer->currentIndex();
-    if (i < 0 || i >= config.tabs.size())
+    const int ci = config.indexOfCollection(m_collectionId);
+    if (ci < 0)
         return QString();
-    return config.tabs[i].id;
+    const CollectionConfig &collection = config.collections[ci];
+    if (i < 0 || i >= collection.tabs.size())
+        return QString();
+    return collection.tabs[i].id;
 }
 
 void SceneWallWidget::refreshTabColors()
 {
+    const int ci = config.indexOfCollection(m_collectionId);
+    if (ci < 0)
+        return;
+    const CollectionConfig &collection = config.collections[ci];
     tabContainer->sceneTabBar()->clearColors();
-    for (int i = 0; i < config.tabs.size() && i < tabContainer->sceneTabBar()->count(); ++i)
-        tabContainer->sceneTabBar()->setTabColor(i, config.tabs[i].color());
+    for (int i = 0; i < collection.tabs.size() && i < tabContainer->sceneTabBar()->count(); ++i)
+        tabContainer->sceneTabBar()->setTabColor(i, collection.tabs[i].color());
     tabContainer->sceneTabBar()->update();
 }
 
-void SceneWallWidget::syncWithObs(const QStringList &obsScenes)
+void SceneWallWidget::syncWithObs(const QStringList &obsSceneUuids,
+                                  const QMap<QString, QStringList> &uuidsBySceneName)
 {
-    if (config.tabs.isEmpty()) {
+    CollectionConfig &collection = currentCollection();
+    if (collection.tabs.isEmpty()) {
         TabConfig all;
         all.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
         all.isAll = true;
         all.colorHex = "#808080";
-        config.tabs.append(all);
+        collection.tabs.append(all);
     }
 
-    for (TabConfig &t : config.tabs) {
-        // Drop scenes that no longer exist in OBS.
-        for (int i = t.scenes.size() - 1; i >= 0; --i)
-            if (!obsScenes.contains(t.scenes[i]))
-                t.scenes.removeAt(i);
+    migrateLegacySceneNames(collection, uuidsBySceneName);
+    filterDeletedScenes(collection, QSet<QString>(obsSceneUuids.begin(), obsSceneUuids.end()));
 
-        // The "All" tab always mirrors the full OBS scene list.
+    for (TabConfig &t : collection.tabs) {
         if (t.isAll)
-            for (const QString &s : obsScenes)
-                if (!t.scenes.contains(s))
-                    t.scenes.append(s);
+            for (const QString &sceneUuid : obsSceneUuids)
+                if (!t.scenes.contains(sceneUuid))
+                    t.scenes.append(sceneUuid);
     }
 }
 
 void SceneWallWidget::loadTabs()
 {
+    m_collectionId = currentSceneCollectionKey();
     const int previousIndex = tabContainer->currentIndex();
 
     tabContainer->blockSignals(true);
@@ -644,16 +677,20 @@ void SceneWallWidget::loadTabs()
     struct obs_frontend_source_list scenes = {};
     obs_frontend_get_scenes(&scenes);
 
-    QStringList obsScenes;
-    QMap<QString, obs_source_t *> byName;
+    QStringList obsSceneUuids;
+    QMap<QString, obs_source_t *> sourcesByUuid;
+    QMap<QString, QStringList> uuidsBySceneName;
     for (size_t i = 0; i < scenes.sources.num; i++) {
         obs_source_t *src = scenes.sources.array[i];
-        const QString n = obs_source_get_name(src);
-        obsScenes.append(n);
-        byName.insert(n, src);
+        const QString name = obs_source_get_name(src);
+        const QString uuid = obs_source_get_uuid(src);
+        obsSceneUuids.append(uuid);
+        sourcesByUuid.insert(uuid, src);
+        uuidsBySceneName[name].append(uuid);
     }
 
-    syncWithObs(obsScenes);
+    syncWithObs(obsSceneUuids, uuidsBySceneName);
+    CollectionConfig &collection = currentCollection();
 
     const int interval = config.realtime ? realtimeIntervalMs() : 500;
 
@@ -661,10 +698,10 @@ void SceneWallWidget::loadTabs()
     // owner stays recognisable even while browsing the "All" tab.
     QMap<QString, QColor> ownerColor;
     QColor allColor(128, 128, 128);
-    for (const TabConfig &t : config.tabs)
+    for (const TabConfig &t : collection.tabs)
         if (t.isAll)
             allColor = t.color();
-    for (const TabConfig &t : config.tabs) {
+    for (const TabConfig &t : collection.tabs) {
         if (t.isAll)
             continue;
         for (const QString &s : t.scenes)
@@ -672,8 +709,8 @@ void SceneWallWidget::loadTabs()
                 ownerColor.insert(s, t.color());
     }
 
-    for (int i = 0; i < config.tabs.size(); ++i) {
-        const TabConfig &tab = config.tabs[i];
+    for (int i = 0; i < collection.tabs.size(); ++i) {
+        const TabConfig &tab = collection.tabs[i];
         const QColor color = tab.color();
 
         QScrollArea *scroll = new QScrollArea();
@@ -683,12 +720,12 @@ void SceneWallWidget::loadTabs()
         connect(container, &SceneContainer::sceneDropped, this,
                 &SceneWallWidget::onSceneDropped);
 
-        for (const QString &name : tab.scenes) {
-            if (!byName.contains(name))
+        for (const QString &sceneUuid : tab.scenes) {
+            if (!sourcesByUuid.contains(sceneUuid))
                 continue;
-            SceneThumbnailWidget *w = new SceneThumbnailWidget(byName.value(name), container);
+            SceneThumbnailWidget *w = new SceneThumbnailWidget(sourcesByUuid.value(sceneUuid), container);
             w->setThumbSize(config.thumbSize);
-            w->setBarColor(ownerColor.value(name, allColor));
+            w->setBarColor(ownerColor.value(sceneUuid, allColor));
             w->setRefreshInterval(interval);
             connect(w, &SceneThumbnailWidget::menuRequested, this, &SceneWallWidget::onSceneMenu);
             connect(w, &SceneThumbnailWidget::collapseToggled, this,
@@ -696,8 +733,11 @@ void SceneWallWidget::loadTabs()
             container->flowLayout()->addWidget(w);
             m_thumbWidgets.append(w);
             // Keep bars collapsed across rebuilds (Settings save, assignment…).
-            if (m_collapsedScenes.contains(name))
+            if (collection.collapsedScenes.contains(sceneUuid)) {
+                w->blockSignals(true);
                 w->setCollapsed(true);
+                w->blockSignals(false);
+            }
         }
 
         scroll->setWidget(container);
@@ -749,12 +789,13 @@ void SceneWallWidget::reflowAll()
     }
 }
 
-void SceneWallWidget::onCollapseToggled(const QString &sceneName, bool collapsed)
+void SceneWallWidget::onCollapseToggled(const QString &sceneUuid, bool collapsed)
 {
     if (collapsed)
-        m_collapsedScenes.insert(sceneName);
+        currentCollection().collapsedScenes.insert(sceneUuid);
     else
-        m_collapsedScenes.remove(sceneName);
+        currentCollection().collapsedScenes.remove(sceneUuid);
+    saveWallConfig(config);
 }
 
 int SceneWallWidget::computeAutosize() const
@@ -812,26 +853,36 @@ void SceneWallWidget::runAutosize()
 
 void SceneWallWidget::onTabMoved(int from, int to)
 {
-    if (from < 0 || to < 0 || from >= config.tabs.size() || to >= config.tabs.size())
+    QList<TabConfig> &tabs = currentCollection().tabs;
+    if (from < 0 || to < 0 || from >= tabs.size() || to >= tabs.size())
         return;
-    config.tabs.move(from, to);
+    tabs.move(from, to);
     saveWallConfig(config);
     refreshTabColors();
 }
 
-void SceneWallWidget::onSceneDropped(const QString &sceneName, int index)
+void SceneWallWidget::onSceneDropped(const QString &sceneUuidOrName, int index)
 {
-    moveSceneInTab(sceneName, index);
+    QString sceneUuid = sceneUuidOrName;
+    const int tabIndex = currentCollection().indexOfTab(currentTabId());
+    if (tabIndex >= 0 && !currentCollection().tabs[tabIndex].scenes.contains(sceneUuid))
+        for (SceneThumbnailWidget *widget : m_thumbWidgets)
+            if (widget->sceneName() == sceneUuidOrName) {
+                sceneUuid = widget->sceneUuid();
+                break;
+            }
+    moveSceneInTab(sceneUuid, index);
 }
 
-void SceneWallWidget::moveSceneInTab(const QString &sceneName, int index)
+void SceneWallWidget::moveSceneInTab(const QString &sceneUuid, int index)
 {
-    const int ti = config.indexOfTab(currentTabId());
+    CollectionConfig &collection = currentCollection();
+    const int ti = collection.indexOfTab(currentTabId());
     if (ti < 0)
         return;
 
-    QStringList &list = config.tabs[ti].scenes;
-    const int from = list.indexOf(sceneName);
+    QStringList &list = collection.tabs[ti].scenes;
+    const int from = list.indexOf(sceneUuid);
     if (from < 0)
         return;
 
@@ -843,33 +894,35 @@ void SceneWallWidget::moveSceneInTab(const QString &sceneName, int index)
         return;
 
     list.removeAt(from);
-    list.insert(target, sceneName);
+    list.insert(target, sceneUuid);
 
     saveWallConfig(config);
     loadTabs();
 }
 
-void SceneWallWidget::assignSceneToTab(const QString &sceneName, const QString &tabId)
+void SceneWallWidget::assignSceneToTab(const QString &sceneUuid, const QString &tabId)
 {
-    for (TabConfig &t : config.tabs) {
+    CollectionConfig &collection = currentCollection();
+    for (TabConfig &t : collection.tabs) {
         if (t.isAll)
             continue;
-        t.scenes.removeAll(sceneName);
+        t.scenes.removeAll(sceneUuid);
     }
 
-    const int ti = config.indexOfTab(tabId);
-    if (ti >= 0 && !config.tabs[ti].isAll && !config.tabs[ti].scenes.contains(sceneName))
-        config.tabs[ti].scenes.append(sceneName);
+    const int ti = collection.indexOfTab(tabId);
+    if (ti >= 0 && !collection.tabs[ti].isAll && !collection.tabs[ti].scenes.contains(sceneUuid))
+        collection.tabs[ti].scenes.append(sceneUuid);
 
     saveWallConfig(config);
     loadTabs();
 }
 
-void SceneWallWidget::removeSceneFromTab(const QString &sceneName, const QString &tabId)
+void SceneWallWidget::removeSceneFromTab(const QString &sceneUuid, const QString &tabId)
 {
-    const int ti = config.indexOfTab(tabId);
-    if (ti >= 0 && !config.tabs[ti].isAll)
-        config.tabs[ti].scenes.removeAll(sceneName);
+    CollectionConfig &collection = currentCollection();
+    const int ti = collection.indexOfTab(tabId);
+    if (ti >= 0 && !collection.tabs[ti].isAll)
+        collection.tabs[ti].scenes.removeAll(sceneUuid);
 
     saveWallConfig(config);
     loadTabs();
@@ -880,33 +933,34 @@ void SceneWallWidget::onSceneMenu(SceneThumbnailWidget *widget, QPoint globalPos
     if (!widget)
         return;
 
-    const QString name = widget->sceneName();
+    const QString sceneUuid = widget->sceneUuid();
     const QString tabId = currentTabId();
-    const int ti = config.indexOfTab(tabId);
+    CollectionConfig &collection = currentCollection();
+    const int ti = collection.indexOfTab(tabId);
 
     QMenu menu;
 
     QMenu *assignMenu = menu.addMenu(obs_module_text("AssignToTab"));
-    for (const TabConfig &t : config.tabs) {
+    for (const TabConfig &t : collection.tabs) {
         if (t.isAll)
             continue;
         QAction *a = assignMenu->addAction(t.name.isEmpty() ? t.id : t.name);
         a->setCheckable(true);
-        a->setChecked(t.scenes.contains(name));
+        a->setChecked(t.scenes.contains(sceneUuid));
         // Clicking an already-assigned tab clears the assignment, so the
         // checkbox can be unchecked again.
-        connect(a, &QAction::triggered, this, [this, name, id = t.id]() {
-            const int ti = config.indexOfTab(id);
-            if (ti >= 0 && config.tabs[ti].scenes.contains(name))
-                removeSceneFromTab(name, id);
+        connect(a, &QAction::triggered, this, [this, sceneUuid, id = t.id]() {
+            const int ti = currentCollection().indexOfTab(id);
+            if (ti >= 0 && currentCollection().tabs[ti].scenes.contains(sceneUuid))
+                removeSceneFromTab(sceneUuid, id);
             else
-                assignSceneToTab(name, id);
+                assignSceneToTab(sceneUuid, id);
         });
     }
 
-    if (ti >= 0 && !config.tabs[ti].isAll)
+    if (ti >= 0 && !collection.tabs[ti].isAll)
         menu.addAction(obs_module_text("RemoveFromTab"),
-                       [this, name, tabId]() { removeSceneFromTab(name, tabId); });
+                       [this, sceneUuid, tabId]() { removeSceneFromTab(sceneUuid, tabId); });
 
     menu.addSeparator();
 

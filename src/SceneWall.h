@@ -60,6 +60,7 @@ public:
     void stopTimer();
 
     QString sceneName() const;
+    QString sceneUuid() const;
     bool collapsed() const { return isCollapsed; }
     obs_source_t *sourcePointer() const { return source; }
 
@@ -70,7 +71,7 @@ public:
 
 signals:
     void menuRequested(SceneThumbnailWidget *widget, QPoint globalPos);
-    void collapseToggled(const QString &sceneName, bool collapsed);
+    void collapseToggled(const QString &sceneUuid, bool collapsed);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -111,10 +112,10 @@ private slots:
     void applyThumbSize(int size);
     void runAutosize();
     void onTabMoved(int from, int to);
-    void onSceneDropped(const QString &sceneName, int index);
+    void onSceneDropped(const QString &sceneUuidOrName, int index);
     void onSceneMenu(SceneThumbnailWidget *widget, QPoint globalPos);
     void onRealtimeToggled(bool on);
-    void onCollapseToggled(const QString &sceneName, bool collapsed);
+    void onCollapseToggled(const QString &sceneUuid, bool collapsed);
     void reloadFromObs();
     void updateIndicators();
 
@@ -126,9 +127,7 @@ private:
     QPushButton *settingsBtn = nullptr;
 
     WallConfig config;
-
-    // Collapse state survives tab rebuilds (e.g. saving Settings).
-    QSet<QString> m_collapsedScenes;
+    QString m_collectionId;
 
     // Cached list of live thumbnails (rebuilt by loadTabs) so indicator
     // updates and size changes don't have to walk the widget tree.
@@ -136,12 +135,14 @@ private:
 
     void loadTabs();
     void reflowAll();
-    void syncWithObs(const QStringList &obsScenes);
+    void syncWithObs(const QStringList &obsSceneUuids,
+                     const QMap<QString, QStringList> &uuidsBySceneName);
+    CollectionConfig &currentCollection();
     void refreshTabColors();
     QString currentTabId() const;
-    void assignSceneToTab(const QString &sceneName, const QString &tabId);
-    void removeSceneFromTab(const QString &sceneName, const QString &tabId);
-    void moveSceneInTab(const QString &sceneName, int index);
+    void assignSceneToTab(const QString &sceneUuid, const QString &tabId);
+    void removeSceneFromTab(const QString &sceneUuid, const QString &tabId);
+    void moveSceneInTab(const QString &sceneUuid, int index);
     int computeAutosize() const;
 
     int realtimeIntervalMs() const;

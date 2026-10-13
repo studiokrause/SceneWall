@@ -33,5 +33,12 @@ target_link_libraries(SceneWall PRIVATE obs.lib obs-frontend-api.lib Qt6::Widget
 
 set_target_properties(SceneWall PROPERTIES PREFIX "")
 
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(ConfigTest tests/ConfigTest.cpp)
+    target_link_libraries(ConfigTest PRIVATE Qt6::Gui)
+    add_test(NAME ConfigTest COMMAND ConfigTest)
+endif()
+
 install(TARGETS SceneWall LIBRARY DESTINATION "obs-plugins/64bit")
 

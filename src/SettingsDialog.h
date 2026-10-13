@@ -14,6 +14,7 @@ public:
 private:
     QTableWidget *tabTable;
     WallConfig config;
+    QString collectionId;
 
     void addTabRow(const TabConfig &tab);
     void pickColorFor(QWidget *button);
