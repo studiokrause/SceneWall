@@ -135,6 +135,7 @@ private:
 
     void loadTabs();
     void reflowAll();
+    bool persistConfig(); // saveWallConfig + warning on failure, so edits are never lost silently
     void syncWithObs(const QStringList &obsSceneUuids,
                      const QMap<QString, QStringList> &uuidsBySceneName);
     CollectionConfig &currentCollection();

@@ -5,6 +5,7 @@
 #include <QColorDialog>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QMessageBox>
 #include <QSizePolicy>
 #include <QTableWidgetItem>
 #include <QUuid>
@@ -194,6 +195,12 @@ void SettingsDialog::saveSettings()
     }
 
     collection.tabs = updated;
-    saveWallConfig(config);
+    // Stay open on failure so the user's edits are not silently discarded.
+    if (!saveWallConfig(config)) {
+        QMessageBox::warning(this, tr("SceneWall"),
+                             tr("Could not save the SceneWall configuration. "
+                                "Check the config file and try again."));
+        return;
+    }
     accept();
 }

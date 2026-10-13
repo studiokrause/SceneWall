@@ -610,6 +610,16 @@ void SceneWallWidget::reloadFromObs()
     loadTabs();
 }
 
+bool SceneWallWidget::persistConfig()
+{
+    if (saveWallConfig(config))
+        return true;
+    QMessageBox::warning(this, tr("SceneWall"),
+                         tr("Could not save the SceneWall configuration. "
+                            "Your changes are kept for this session but will be lost on restart."));
+    return false;
+}
+
 CollectionConfig &SceneWallWidget::currentCollection()
 {
     return config.ensureCollection(m_collectionId);
@@ -756,7 +766,10 @@ void SceneWallWidget::loadTabs()
         tabContainer->setCurrentIndex(previousIndex);
 
     reflowAll();
-    saveWallConfig(config);
+    // An empty snapshot (OBS startup / collection switch) proves nothing:
+    // never persist it over saved assignments.
+    if (!obsSceneUuids.isEmpty())
+        persistConfig();
 }
 
 void SceneWallWidget::applyThumbSize(int size)
@@ -765,7 +778,7 @@ void SceneWallWidget::applyThumbSize(int size)
     // One size for every tab; Autosize is only *computed* from the current tab.
     for (SceneThumbnailWidget *w : m_thumbWidgets)
         w->setThumbSize(size);
-    saveWallConfig(config);
+    persistConfig();
 
     reflowAll();
 }
@@ -795,7 +808,7 @@ void SceneWallWidget::onCollapseToggled(const QString &sceneUuid, bool collapsed
         currentCollection().collapsedScenes.insert(sceneUuid);
     else
         currentCollection().collapsedScenes.remove(sceneUuid);
-    saveWallConfig(config);
+    persistConfig();
 }
 
 int SceneWallWidget::computeAutosize() const
@@ -857,7 +870,7 @@ void SceneWallWidget::onTabMoved(int from, int to)
     if (from < 0 || to < 0 || from >= tabs.size() || to >= tabs.size())
         return;
     tabs.move(from, to);
-    saveWallConfig(config);
+    persistConfig();
     refreshTabColors();
 }
 
@@ -896,7 +909,7 @@ void SceneWallWidget::moveSceneInTab(const QString &sceneUuid, int index)
     list.removeAt(from);
     list.insert(target, sceneUuid);
 
-    saveWallConfig(config);
+    persistConfig();
     loadTabs();
 }
 
@@ -913,7 +926,7 @@ void SceneWallWidget::assignSceneToTab(const QString &sceneUuid, const QString &
     if (ti >= 0 && !collection.tabs[ti].isAll && !collection.tabs[ti].scenes.contains(sceneUuid))
         collection.tabs[ti].scenes.append(sceneUuid);
 
-    saveWallConfig(config);
+    persistConfig();
     loadTabs();
 }
 
@@ -924,7 +937,7 @@ void SceneWallWidget::removeSceneFromTab(const QString &sceneUuid, const QString
     if (ti >= 0 && !collection.tabs[ti].isAll)
         collection.tabs[ti].scenes.removeAll(sceneUuid);
 
-    saveWallConfig(config);
+    persistConfig();
     loadTabs();
 }
 
@@ -989,7 +1002,7 @@ void SceneWallWidget::onRealtimeToggled(bool on)
     }
 
     config.realtime = on;
-    saveWallConfig(config);
+    persistConfig();
 
     const int ms = on ? realtimeIntervalMs() : 500;
     for (SceneThumbnailWidget *w : m_thumbWidgets)

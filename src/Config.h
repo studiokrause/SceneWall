@@ -88,6 +88,10 @@ inline QString getCfgPath()
 inline void migrateLegacySceneNames(CollectionConfig &collection,
                                     const QMap<QString, QStringList> &sceneNameToUuids)
 {
+    // An empty snapshot (OBS startup / collection switch) proves nothing:
+    // keep legacy names until a real scene list arrives.
+    if (sceneNameToUuids.isEmpty())
+        return;
     for (TabConfig &tab : collection.tabs) {
         for (const QString &name : tab.legacySceneNames) {
             const QStringList matches = sceneNameToUuids.value(name);
@@ -100,6 +104,10 @@ inline void migrateLegacySceneNames(CollectionConfig &collection,
 
 inline void filterDeletedScenes(CollectionConfig &collection, const QSet<QString> &liveSceneUuids)
 {
+    // An empty snapshot (OBS startup / collection switch) proves nothing:
+    // keep saved assignments until a real scene list arrives.
+    if (liveSceneUuids.isEmpty())
+        return;
     for (TabConfig &tab : collection.tabs)
         for (int i = tab.scenes.size() - 1; i >= 0; --i)
             if (!liveSceneUuids.contains(tab.scenes[i]))

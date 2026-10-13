@@ -158,6 +158,41 @@ void testDeletedSceneFiltering()
     check(active.collapsedScenes == QSet<QString>{uuid('2')}, "deleted collapse state removed");
 }
 
+void testEmptySnapshotPreservesAssignments()
+{
+    // An empty OBS snapshot (startup / collection switch) must not erase
+    // saved assignments: migration and filtering stay no-ops until a real
+    // scene list arrives.
+    CollectionConfig active = collection(
+            "Studio", {tab(uuid('5'), {uuid('1'), uuid('2')}), tab(uuid('6'), {uuid('2')})});
+    active.tabs[0].legacySceneNames = {"Intro"};
+    active.collapsedScenes = {uuid('1'), uuid('2')};
+
+    migrateLegacySceneNames(active, {});
+    check(active.tabs[0].legacySceneNames == QStringList{"Intro"},
+          "empty snapshot keeps legacy names for later migration");
+    check(active.tabs[0].scenes == QStringList{uuid('1'), uuid('2')},
+          "empty snapshot does not touch migrated scenes");
+
+    filterDeletedScenes(active, {});
+    check(active.tabs[0].scenes == QStringList{uuid('1'), uuid('2')},
+          "empty snapshot keeps saved scene assignments");
+    check(active.tabs[1].scenes == QStringList{uuid('2')},
+          "empty snapshot keeps other tab assignments");
+    check(active.collapsedScenes == QSet<QString>{uuid('1'), uuid('2')},
+          "empty snapshot keeps collapse state");
+}
+
+void testSaveFailureIsReported(const QString &directory)
+{
+    // saveWallConfig must report failure (not look successful) so callers
+    // can keep edits instead of losing them silently.
+    WallConfig config;
+    config.collections = {collection("Studio", {tab(uuid('9'), {uuid('a')})})};
+    check(!saveWallConfig(config, directory + "/no-such-dir/config.json"),
+          "unwritable path reports save failure");
+}
+
 void testUnsafeWritesDoNotReplaceConfig(const QString &directory)
 {
     const QString path = directory + "/protected.json";
@@ -239,6 +274,8 @@ int main(int argc, char **argv)
     testLegacyNameMigration(directory.path());
     testBareArrayMigration(directory.path());
     testDeletedSceneFiltering();
+    testEmptySnapshotPreservesAssignments();
+    testSaveFailureIsReported(directory.path());
     testUnsafeWritesDoNotReplaceConfig(directory.path());
 
     if (failures)
