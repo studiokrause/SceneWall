@@ -26,6 +26,8 @@
 #include <graphics/graphics.h>
 
 // One scene cell: coloured header bar on top plus the live preview below it.
+// Holds one obs source ref for its whole lifetime; ctor balances
+// obs_source_inc_showing() with exactly one dec_showing before release in dtor.
 class SceneThumbnailWidget : public QWidget {
     Q_OBJECT
     obs_source_t *source;

@@ -264,11 +264,21 @@ bool SceneThumbnailWidget::renderAsyncFrame()
 
     bool ok = false;
     if (!img.isNull()) {
-        // Deep-copy into `thumbnail` BEFORE releasing the frame: `img` only
-        // wraps frame->data, which obs_source_release_frame may free.
-        thumbnail = img.copy().scaled(previewSize(), Qt::KeepAspectRatio,
-                                      Qt::SmoothTransformation);
-        ok = !thumbnail.isNull();
+        // Deep-copy BEFORE releasing the frame: `img` only wraps
+        // frame->data, which obs_source_release_frame may free. Keep the
+        // layout box fixed (previewSize, 16:9) and letterbox: scale with
+        // KeepAspectRatio, center on a black canvas, never stretch.
+        const QSize box = previewSize();
+        QImage scaled = img.copy().scaled(box, Qt::KeepAspectRatio,
+                                          Qt::SmoothTransformation);
+        if (!scaled.isNull()) {
+            thumbnail = QImage(box, QImage::Format_ARGB32);
+            thumbnail.fill(Qt::black);
+            QPainter painter(&thumbnail);
+            painter.drawImage((box.width() - scaled.width()) / 2,
+                              (box.height() - scaled.height()) / 2, scaled);
+            ok = !thumbnail.isNull();
+        }
     }
 
     // Safe to release only after the deep copy above has completed.
@@ -326,9 +336,14 @@ bool SceneThumbnailWidget::renderSceneOffscreen()
     if (gs_texrender_begin(texrender, tw, th)) {
         struct vec4 clearColor;
         vec4_zero(&clearColor);
+        // Black canvas first, then letterbox: viewport only on the image
+        // rect so non-16:9 scenes (4:3, portrait) are not stretched.
         gs_set_viewport(0, 0, (int)tw, (int)th);
         gs_clear(GS_CLEAR_COLOR, &clearColor, 0.0f, 0);
-        // Map the whole scene into the thumbnail-sized viewport.
+        const float scale = qMin((float)tw / (float)sw, (float)th / (float)sh);
+        const int dw = qMax(1, (int)(sw * scale));
+        const int dh = qMax(1, (int)(sh * scale));
+        gs_set_viewport(((int)tw - dw) / 2, ((int)th - dh) / 2, dw, dh);
         gs_ortho(0.0f, (float)sw, 0.0f, (float)sh, -100.0f, 100.0f);
 
         obs_source_video_render(source);
