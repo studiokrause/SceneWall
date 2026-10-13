@@ -2,6 +2,7 @@
 #include "SettingsDialog.h"
 
 #include <QDrag>
+#include <QApplication>
 #include <QEvent>
 #include <QFontMetrics>
 #include <QList>
@@ -22,10 +23,24 @@
 #include <obs-module.h>
 #include <obs.h>
 #include <obs-source.h>
+#include <util/bmem.h>
 #include <util/c99defs.h>
 #include <media-io/video-io.h>
 #include <graphics/graphics.h>
 #include <graphics/vec4.h>
+
+QString currentSceneCollectionKey()
+{
+    char *collection = obs_frontend_get_current_scene_collection();
+    const QString key = collection ? QString::fromUtf8(collection) : QString();
+    bfree(collection);
+    return key;
+}
+
+WallConfig loadWallConfig()
+{
+    return loadWallConfig(getCfgPath(), currentSceneCollectionKey());
+}
 
 /* ------------------------------------------------------------------ */
 /* SceneThumbnailWidget                                                */
@@ -42,20 +57,13 @@ SceneThumbnailWidget::SceneThumbnailWidget(obs_source_t *src, QWidget *parent)
     obs_source_inc_showing(source);
 
     applySize();
-
-    // Each thumbnail owns its own timer so that every one renders at the
-    // requested rate. A shared round-robin scheduler was tried and reverted:
-    // rendering one thumbnail per tick meant each one only updated every
-    // N * tick, which visibly stuttered in Realtime mode.
-    refreshTimer = new QTimer(this);
-    connect(refreshTimer, &QTimer::timeout, this, &SceneThumbnailWidget::updateThumbnail);
-    refreshTimer->start(500); // 2 FPS
+    // No per-widget timer: the wall scheduler (one QTimer, round-robin,
+    // maxGpuReadsPerTick) calls renderIfVisible() so N scenes never run
+    // N independent full GPU readbacks per tick.
 }
 
 SceneThumbnailWidget::~SceneThumbnailWidget()
 {
-    refreshTimer->stop();
-
     if (texrender || stagesurf) {
         obs_enter_graphics();
         if (stagesurf)
@@ -77,6 +85,11 @@ QString SceneThumbnailWidget::sceneName() const
     return QString(obs_source_get_name(source));
 }
 
+QString SceneThumbnailWidget::sceneUuid() const
+{
+    return QString(obs_source_get_uuid(source));
+}
+
 void SceneThumbnailWidget::setThumbSize(int size)
 {
     thumbSize = size;
@@ -89,22 +102,6 @@ void SceneThumbnailWidget::setBarColor(const QColor &color)
 {
     barColor = color.isValid() ? color : QColor(80, 80, 80);
     update();
-}
-
-void SceneThumbnailWidget::setRefreshInterval(int ms)
-{
-    refreshTimer->setInterval(ms);
-}
-
-void SceneThumbnailWidget::startTimer()
-{
-    if (!isCollapsed)
-        refreshTimer->start();
-}
-
-void SceneThumbnailWidget::stopTimer()
-{
-    refreshTimer->stop();
 }
 
 void SceneThumbnailWidget::setProgram(bool on)
@@ -123,7 +120,7 @@ void SceneThumbnailWidget::setPreview(bool on)
     }
 }
 
-void SceneThumbnailWidget::updateThumbnail()
+void SceneThumbnailWidget::renderIfVisible()
 {
     // Skip the expensive GPU work for anything the user cannot actually see:
     // hidden dock, another tab, or scrolled out of the viewport.
@@ -171,16 +168,12 @@ void SceneThumbnailWidget::setCollapsed(bool collapsed)
         return;
 
     isCollapsed = collapsed;
-    if (isCollapsed) {
+    if (isCollapsed)
         thumbnail = QImage(); // only the bar remains
-        refreshTimer->stop();
-    } else {
-        refreshTimer->start();
-    }
     applySize();
     update();
 
-    emit collapseToggled(sceneName(), isCollapsed);
+    emit collapseToggled(sceneUuid(), isCollapsed);
 
     // Re-wrap the flow layout around the new item size. Never call
     // adjustSize() here: it would resize the container to its sizeHint (one
@@ -245,11 +238,21 @@ bool SceneThumbnailWidget::renderAsyncFrame()
 
     bool ok = false;
     if (!img.isNull()) {
-        // Deep-copy into `thumbnail` BEFORE releasing the frame: `img` only
-        // wraps frame->data, which obs_source_release_frame may free.
-        thumbnail = img.copy().scaled(previewSize(), Qt::KeepAspectRatio,
-                                      Qt::SmoothTransformation);
-        ok = !thumbnail.isNull();
+        // Deep-copy BEFORE releasing the frame: `img` only wraps
+        // frame->data, which obs_source_release_frame may free. Keep the
+        // layout box fixed (previewSize, 16:9) and letterbox: scale with
+        // KeepAspectRatio, center on a black canvas, never stretch.
+        const QSize box = previewSize();
+        QImage scaled = img.copy().scaled(box, Qt::KeepAspectRatio,
+                                          Qt::SmoothTransformation);
+        if (!scaled.isNull()) {
+            thumbnail = QImage(box, QImage::Format_ARGB32);
+            thumbnail.fill(Qt::black);
+            QPainter painter(&thumbnail);
+            painter.drawImage((box.width() - scaled.width()) / 2,
+                              (box.height() - scaled.height()) / 2, scaled);
+            ok = !thumbnail.isNull();
+        }
     }
 
     // Safe to release only after the deep copy above has completed.
@@ -307,9 +310,14 @@ bool SceneThumbnailWidget::renderSceneOffscreen()
     if (gs_texrender_begin(texrender, tw, th)) {
         struct vec4 clearColor;
         vec4_zero(&clearColor);
+        // Black canvas first, then letterbox: viewport only on the image
+        // rect so non-16:9 scenes (4:3, portrait) are not stretched.
         gs_set_viewport(0, 0, (int)tw, (int)th);
         gs_clear(GS_CLEAR_COLOR, &clearColor, 0.0f, 0);
-        // Map the whole scene into the thumbnail-sized viewport.
+        const float scale = qMin((float)tw / (float)sw, (float)th / (float)sh);
+        const int dw = qMax(1, (int)(sw * scale));
+        const int dh = qMax(1, (int)(sh * scale));
+        gs_set_viewport(((int)tw - dw) / 2, ((int)th - dh) / 2, dw, dh);
         gs_ortho(0.0f, (float)sw, 0.0f, (float)sh, -100.0f, 100.0f);
 
         obs_source_video_render(source);
@@ -390,6 +398,7 @@ void SceneThumbnailWidget::mousePressEvent(QMouseEvent *event)
 {
     const QPoint pos = event->position().toPoint();
     dragStartPos = pos;
+    dragStarted = false;
 
     // CTRL+click opens the plugin menu (never the right button).
     if (event->modifiers() & Qt::ControlModifier) {
@@ -411,25 +420,41 @@ void SceneThumbnailWidget::mousePressEvent(QMouseEvent *event)
         return;
     }
 
-    if (event->button() == Qt::LeftButton)
-        obs_frontend_set_current_scene(source);
+    // Left press only arms a potential drag; Program switches on release.
 }
 
 void SceneThumbnailWidget::mouseMoveEvent(QMouseEvent *event)
 {
     if (!(event->buttons() & Qt::LeftButton))
         return;
-    if ((event->position().toPoint() - dragStartPos).manhattanLength() < 5)
+    if ((event->position().toPoint() - dragStartPos).manhattanLength() <
+        QApplication::startDragDistance())
         return;
 
-    // Left-drag reorders scenes inside the tab.
+    // Left-drag reorders scenes inside the tab (stable UUID, not the name,
+    // so duplicate scene names reorder the right item).
+    dragStarted = true;
     QDrag *drag = new QDrag(this);
     QMimeData *mime = new QMimeData;
-    mime->setData(SceneContainer::MIME, sceneName().toUtf8());
+    mime->setData(SceneContainer::MIME, sceneUuid().toUtf8());
     drag->setMimeData(mime);
     drag->setPixmap(grab());
     drag->exec(Qt::MoveAction);
     drag->deleteLater();
+}
+
+void SceneThumbnailWidget::mouseReleaseEvent(QMouseEvent *event)
+{
+    // Press already handled right button and CTRL+click; release only
+    // switches Program for a plain left click that never became a drag.
+    if (event->button() != Qt::LeftButton)
+        return;
+    if (event->modifiers() & Qt::ControlModifier)
+        return;
+    if (dragStarted)
+        return;
+
+    obs_frontend_set_current_scene(source);
 }
 
 /* ------------------------------------------------------------------ */
@@ -476,6 +501,7 @@ static QIcon makeGearIcon(const QColor &color, int size = 18)
 SceneWallWidget::SceneWallWidget(QWidget *parent) : QDockWidget(parent)
 {
     setWindowTitle("SceneWall");
+    m_collectionId = currentSceneCollectionKey();
     config = loadWallConfig();
 
     QWidget *content = new QWidget(this);
@@ -527,6 +553,11 @@ SceneWallWidget::SceneWallWidget(QWidget *parent) : QDockWidget(parent)
     // Rebuild when OBS's own scene list changes (add / remove / rename), so
     // every tab stays in sync without reopening the panel.
     obs_frontend_add_event_callback(onFrontendEvent, this);
+
+    // One shared render timer for all thumbnails: each tick renders at most
+    // maxGpuReadsPerTick visible widgets round-robin (see onSchedulerTick).
+    m_renderTimer = new QTimer(this);
+    connect(m_renderTimer, &QTimer::timeout, this, &SceneWallWidget::onSchedulerTick);
 
     loadTabs();
     updateIndicators();
@@ -590,81 +621,114 @@ void SceneWallWidget::reloadFromObs()
     loadTabs();
 }
 
+bool SceneWallWidget::persistConfig()
+{
+    if (saveWallConfig(config))
+        return true;
+    QMessageBox::warning(this, tr("SceneWall"),
+                         tr("Could not save the SceneWall configuration. "
+                            "Your changes are kept for this session but will be lost on restart."));
+    return false;
+}
+
+CollectionConfig &SceneWallWidget::currentCollection()
+{
+    return config.ensureCollection(m_collectionId);
+}
+
 QString SceneWallWidget::currentTabId() const
 {
     const int i = tabContainer->currentIndex();
-    if (i < 0 || i >= config.tabs.size())
+    const int ci = config.indexOfCollection(m_collectionId);
+    if (ci < 0)
         return QString();
-    return config.tabs[i].id;
+    const CollectionConfig &collection = config.collections[ci];
+    if (i < 0 || i >= collection.tabs.size())
+        return QString();
+    return collection.tabs[i].id;
 }
 
 void SceneWallWidget::refreshTabColors()
 {
+    const int ci = config.indexOfCollection(m_collectionId);
+    if (ci < 0)
+        return;
+    const CollectionConfig &collection = config.collections[ci];
     tabContainer->sceneTabBar()->clearColors();
-    for (int i = 0; i < config.tabs.size() && i < tabContainer->sceneTabBar()->count(); ++i)
-        tabContainer->sceneTabBar()->setTabColor(i, config.tabs[i].color());
+    for (int i = 0; i < collection.tabs.size() && i < tabContainer->sceneTabBar()->count(); ++i)
+        tabContainer->sceneTabBar()->setTabColor(i, collection.tabs[i].color());
     tabContainer->sceneTabBar()->update();
 }
 
-void SceneWallWidget::syncWithObs(const QStringList &obsScenes)
+void SceneWallWidget::syncWithObs(const QStringList &obsSceneUuids,
+                                  const QMap<QString, QStringList> &uuidsBySceneName)
 {
-    if (config.tabs.isEmpty()) {
+    CollectionConfig &collection = currentCollection();
+    if (collection.tabs.isEmpty()) {
         TabConfig all;
         all.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
         all.isAll = true;
         all.colorHex = "#808080";
-        config.tabs.append(all);
+        collection.tabs.append(all);
     }
 
-    for (TabConfig &t : config.tabs) {
-        // Drop scenes that no longer exist in OBS.
-        for (int i = t.scenes.size() - 1; i >= 0; --i)
-            if (!obsScenes.contains(t.scenes[i]))
-                t.scenes.removeAt(i);
+    migrateLegacySceneNames(collection, uuidsBySceneName);
+    filterDeletedScenes(collection, QSet<QString>(obsSceneUuids.begin(), obsSceneUuids.end()));
 
-        // The "All" tab always mirrors the full OBS scene list.
+    for (TabConfig &t : collection.tabs) {
         if (t.isAll)
-            for (const QString &s : obsScenes)
-                if (!t.scenes.contains(s))
-                    t.scenes.append(s);
+            for (const QString &sceneUuid : obsSceneUuids)
+                if (!t.scenes.contains(sceneUuid))
+                    t.scenes.append(sceneUuid);
     }
 }
 
 void SceneWallWidget::loadTabs()
 {
+    m_collectionId = currentSceneCollectionKey();
     const int previousIndex = tabContainer->currentIndex();
 
+    stopScheduler(); // never tick while widgets are being rebuilt
     tabContainer->blockSignals(true);
-    tabContainer->clear();
+    // QTabWidget::clear() only removes pages without deleting them, so
+    // destroy each page explicitly: deleting the scroll area deletes its
+    // SceneContainer and every thumbnail (dec_showing runs in each dtor).
+    while (tabContainer->count() > 0) {
+        QWidget *page = tabContainer->widget(0);
+        tabContainer->removeTab(0);
+        delete page;
+    }
     tabContainer->sceneTabBar()->clearColors();
 
-    // Old widgets are gone (clear() deleted them) - drop stale pointers.
+    // Old widgets are gone (deleted above) - drop stale pointers.
     m_thumbWidgets.clear();
 
     struct obs_frontend_source_list scenes = {};
     obs_frontend_get_scenes(&scenes);
 
-    QStringList obsScenes;
-    QMap<QString, obs_source_t *> byName;
+    QStringList obsSceneUuids;
+    QMap<QString, obs_source_t *> sourcesByUuid;
+    QMap<QString, QStringList> uuidsBySceneName;
     for (size_t i = 0; i < scenes.sources.num; i++) {
         obs_source_t *src = scenes.sources.array[i];
-        const QString n = obs_source_get_name(src);
-        obsScenes.append(n);
-        byName.insert(n, src);
+        const QString name = obs_source_get_name(src);
+        const QString uuid = obs_source_get_uuid(src);
+        obsSceneUuids.append(uuid);
+        sourcesByUuid.insert(uuid, src);
+        uuidsBySceneName[name].append(uuid);
     }
 
-    syncWithObs(obsScenes);
-
-    const int interval = config.realtime ? realtimeIntervalMs() : 500;
+    syncWithObs(obsSceneUuids, uuidsBySceneName);
+    CollectionConfig &collection = currentCollection();
 
     // A scene's bar takes the colour of the tab it is assigned to, so the
     // owner stays recognisable even while browsing the "All" tab.
     QMap<QString, QColor> ownerColor;
     QColor allColor(128, 128, 128);
-    for (const TabConfig &t : config.tabs)
+    for (const TabConfig &t : collection.tabs)
         if (t.isAll)
             allColor = t.color();
-    for (const TabConfig &t : config.tabs) {
+    for (const TabConfig &t : collection.tabs) {
         if (t.isAll)
             continue;
         for (const QString &s : t.scenes)
@@ -672,8 +736,8 @@ void SceneWallWidget::loadTabs()
                 ownerColor.insert(s, t.color());
     }
 
-    for (int i = 0; i < config.tabs.size(); ++i) {
-        const TabConfig &tab = config.tabs[i];
+    for (int i = 0; i < collection.tabs.size(); ++i) {
+        const TabConfig &tab = collection.tabs[i];
         const QColor color = tab.color();
 
         QScrollArea *scroll = new QScrollArea();
@@ -683,21 +747,23 @@ void SceneWallWidget::loadTabs()
         connect(container, &SceneContainer::sceneDropped, this,
                 &SceneWallWidget::onSceneDropped);
 
-        for (const QString &name : tab.scenes) {
-            if (!byName.contains(name))
+        for (const QString &sceneUuid : tab.scenes) {
+            if (!sourcesByUuid.contains(sceneUuid))
                 continue;
-            SceneThumbnailWidget *w = new SceneThumbnailWidget(byName.value(name), container);
+            SceneThumbnailWidget *w = new SceneThumbnailWidget(sourcesByUuid.value(sceneUuid), container);
             w->setThumbSize(config.thumbSize);
-            w->setBarColor(ownerColor.value(name, allColor));
-            w->setRefreshInterval(interval);
+            w->setBarColor(ownerColor.value(sceneUuid, allColor));
             connect(w, &SceneThumbnailWidget::menuRequested, this, &SceneWallWidget::onSceneMenu);
             connect(w, &SceneThumbnailWidget::collapseToggled, this,
                     &SceneWallWidget::onCollapseToggled);
             container->flowLayout()->addWidget(w);
             m_thumbWidgets.append(w);
             // Keep bars collapsed across rebuilds (Settings save, assignment…).
-            if (m_collapsedScenes.contains(name))
+            if (collection.collapsedScenes.contains(sceneUuid)) {
+                w->blockSignals(true);
                 w->setCollapsed(true);
+                w->blockSignals(false);
+            }
         }
 
         scroll->setWidget(container);
@@ -716,7 +782,11 @@ void SceneWallWidget::loadTabs()
         tabContainer->setCurrentIndex(previousIndex);
 
     reflowAll();
-    saveWallConfig(config);
+    // An empty snapshot (OBS startup / collection switch) proves nothing:
+    // never persist it over saved assignments.
+    if (!obsSceneUuids.isEmpty())
+        persistConfig();
+    startScheduler(); // no-op while the dock is hidden
 }
 
 void SceneWallWidget::applyThumbSize(int size)
@@ -725,7 +795,7 @@ void SceneWallWidget::applyThumbSize(int size)
     // One size for every tab; Autosize is only *computed* from the current tab.
     for (SceneThumbnailWidget *w : m_thumbWidgets)
         w->setThumbSize(size);
-    saveWallConfig(config);
+    persistConfig();
 
     reflowAll();
 }
@@ -749,12 +819,13 @@ void SceneWallWidget::reflowAll()
     }
 }
 
-void SceneWallWidget::onCollapseToggled(const QString &sceneName, bool collapsed)
+void SceneWallWidget::onCollapseToggled(const QString &sceneUuid, bool collapsed)
 {
     if (collapsed)
-        m_collapsedScenes.insert(sceneName);
+        currentCollection().collapsedScenes.insert(sceneUuid);
     else
-        m_collapsedScenes.remove(sceneName);
+        currentCollection().collapsedScenes.remove(sceneUuid);
+    persistConfig();
 }
 
 int SceneWallWidget::computeAutosize() const
@@ -771,24 +842,35 @@ int SceneWallWidget::computeAutosize() const
     if (!container)
         return config.thumbSize;
 
-    const QList<SceneThumbnailWidget *> widgets =
-            container->findChildren<SceneThumbnailWidget *>();
-    if (widgets.isEmpty())
+    FlowLayout *layout = container->flowLayout();
+    if (!layout || layout->count() == 0)
         return config.thumbSize;
 
     const int MIN = sizeSlider->minimum();
     const int MAX = sizeSlider->maximum();
+    const int margin = 6;
     const int spacing = 6;
-    const int usableW = avail.width() - 12;
+    const int usableW = avail.width() - 2 * margin;
+    const int usableH = avail.height() - 2 * margin;
 
     for (int s = MAX; s >= MIN; --s) {
         const int itemH = SceneThumbnailWidget::HEADER_HEIGHT + s * 9 / 16;
 
         int rows = 1;
         int rowW = 0;
-        for (SceneThumbnailWidget *w : widgets) {
+        bool fits = true;
+        for (int i = 0; i < layout->count(); ++i) {
+            QLayoutItem *item = layout->itemAt(i);
+            SceneThumbnailWidget *w =
+                    item ? qobject_cast<SceneThumbnailWidget *>(item->widget()) : nullptr;
+            if (!w)
+                continue;
             // A collapsed bar is much narrower than a full thumbnail.
             const int itemW = w->collapsed() ? SceneThumbnailWidget::COLLAPSED_WIDTH : s;
+            if (itemW > usableW) {
+                fits = false;
+                break;
+            }
             if (rowW > 0 && rowW + spacing + itemW > usableW) {
                 rows++;
                 rowW = 0;
@@ -797,7 +879,7 @@ int SceneWallWidget::computeAutosize() const
         }
 
         const int totalH = rows * itemH + (rows - 1) * spacing;
-        if (totalH <= avail.height())
+        if (fits && totalH <= usableH)
             return s;
     }
 
@@ -812,26 +894,30 @@ void SceneWallWidget::runAutosize()
 
 void SceneWallWidget::onTabMoved(int from, int to)
 {
-    if (from < 0 || to < 0 || from >= config.tabs.size() || to >= config.tabs.size())
+    QList<TabConfig> &tabs = currentCollection().tabs;
+    if (from < 0 || to < 0 || from >= tabs.size() || to >= tabs.size())
         return;
-    config.tabs.move(from, to);
-    saveWallConfig(config);
+    tabs.move(from, to);
+    persistConfig();
     refreshTabColors();
 }
 
-void SceneWallWidget::onSceneDropped(const QString &sceneName, int index)
+void SceneWallWidget::onSceneDropped(const QString &sceneUuid, int index)
 {
-    moveSceneInTab(sceneName, index);
+    // UUID-only: an unknown UUID is rejected inside moveSceneInTab without
+    // touching the config (fixes duplicate-name reorder).
+    moveSceneInTab(sceneUuid, index);
 }
 
-void SceneWallWidget::moveSceneInTab(const QString &sceneName, int index)
+void SceneWallWidget::moveSceneInTab(const QString &sceneUuid, int index)
 {
-    const int ti = config.indexOfTab(currentTabId());
+    CollectionConfig &collection = currentCollection();
+    const int ti = collection.indexOfTab(currentTabId());
     if (ti < 0)
         return;
 
-    QStringList &list = config.tabs[ti].scenes;
-    const int from = list.indexOf(sceneName);
+    QStringList &list = collection.tabs[ti].scenes;
+    const int from = list.indexOf(sceneUuid);
     if (from < 0)
         return;
 
@@ -843,35 +929,67 @@ void SceneWallWidget::moveSceneInTab(const QString &sceneName, int index)
         return;
 
     list.removeAt(from);
-    list.insert(target, sceneName);
+    list.insert(target, sceneUuid);
 
-    saveWallConfig(config);
-    loadTabs();
-}
+    persistConfig();
 
-void SceneWallWidget::assignSceneToTab(const QString &sceneName, const QString &tabId)
-{
-    for (TabConfig &t : config.tabs) {
-        if (t.isAll)
-            continue;
-        t.scenes.removeAll(sceneName);
+    QScrollArea *scroll = qobject_cast<QScrollArea *>(tabContainer->currentWidget());
+    SceneContainer *container =
+            scroll ? qobject_cast<SceneContainer *>(scroll->widget()) : nullptr;
+    if (!container)
+        return;
+
+    FlowLayout *layout = container->flowLayout();
+    QList<QLayoutItem *> items;
+    QMap<QString, QLayoutItem *> itemsByUuid;
+    while (layout->count() > 0) {
+        QLayoutItem *item = layout->takeAt(0);
+        items.append(item);
+        if (SceneThumbnailWidget *widget = qobject_cast<SceneThumbnailWidget *>(item->widget()))
+            itemsByUuid.insert(widget->sceneUuid(), item);
     }
 
-    const int ti = config.indexOfTab(tabId);
-    if (ti >= 0 && !config.tabs[ti].isAll && !config.tabs[ti].scenes.contains(sceneName))
-        config.tabs[ti].scenes.append(sceneName);
+    QList<QLayoutItem *> ordered;
+    for (const QString &uuid : list) {
+        if (QLayoutItem *item = itemsByUuid.value(uuid, nullptr)) {
+            layout->addItem(item);
+            ordered.append(item);
+        }
+    }
+    for (QLayoutItem *item : items)
+        if (!ordered.contains(item))
+            layout->addItem(item);
 
-    saveWallConfig(config);
+    layout->invalidate();
+    layout->activate();
+    container->updateGeometry();
+}
+
+void SceneWallWidget::assignSceneToTab(const QString &sceneUuid, const QString &tabId)
+{
+    CollectionConfig &collection = currentCollection();
+    for (TabConfig &t : collection.tabs) {
+        if (t.isAll)
+            continue;
+        t.scenes.removeAll(sceneUuid);
+    }
+
+    const int ti = collection.indexOfTab(tabId);
+    if (ti >= 0 && !collection.tabs[ti].isAll && !collection.tabs[ti].scenes.contains(sceneUuid))
+        collection.tabs[ti].scenes.append(sceneUuid);
+
+    persistConfig();
     loadTabs();
 }
 
-void SceneWallWidget::removeSceneFromTab(const QString &sceneName, const QString &tabId)
+void SceneWallWidget::removeSceneFromTab(const QString &sceneUuid, const QString &tabId)
 {
-    const int ti = config.indexOfTab(tabId);
-    if (ti >= 0 && !config.tabs[ti].isAll)
-        config.tabs[ti].scenes.removeAll(sceneName);
+    CollectionConfig &collection = currentCollection();
+    const int ti = collection.indexOfTab(tabId);
+    if (ti >= 0 && !collection.tabs[ti].isAll)
+        collection.tabs[ti].scenes.removeAll(sceneUuid);
 
-    saveWallConfig(config);
+    persistConfig();
     loadTabs();
 }
 
@@ -880,33 +998,34 @@ void SceneWallWidget::onSceneMenu(SceneThumbnailWidget *widget, QPoint globalPos
     if (!widget)
         return;
 
-    const QString name = widget->sceneName();
+    const QString sceneUuid = widget->sceneUuid();
     const QString tabId = currentTabId();
-    const int ti = config.indexOfTab(tabId);
+    CollectionConfig &collection = currentCollection();
+    const int ti = collection.indexOfTab(tabId);
 
     QMenu menu;
 
     QMenu *assignMenu = menu.addMenu(obs_module_text("AssignToTab"));
-    for (const TabConfig &t : config.tabs) {
+    for (const TabConfig &t : collection.tabs) {
         if (t.isAll)
             continue;
         QAction *a = assignMenu->addAction(t.name.isEmpty() ? t.id : t.name);
         a->setCheckable(true);
-        a->setChecked(t.scenes.contains(name));
+        a->setChecked(t.scenes.contains(sceneUuid));
         // Clicking an already-assigned tab clears the assignment, so the
         // checkbox can be unchecked again.
-        connect(a, &QAction::triggered, this, [this, name, id = t.id]() {
-            const int ti = config.indexOfTab(id);
-            if (ti >= 0 && config.tabs[ti].scenes.contains(name))
-                removeSceneFromTab(name, id);
+        connect(a, &QAction::triggered, this, [this, sceneUuid, id = t.id]() {
+            const int ti = currentCollection().indexOfTab(id);
+            if (ti >= 0 && currentCollection().tabs[ti].scenes.contains(sceneUuid))
+                removeSceneFromTab(sceneUuid, id);
             else
-                assignSceneToTab(name, id);
+                assignSceneToTab(sceneUuid, id);
         });
     }
 
-    if (ti >= 0 && !config.tabs[ti].isAll)
+    if (ti >= 0 && !collection.tabs[ti].isAll)
         menu.addAction(obs_module_text("RemoveFromTab"),
-                       [this, name, tabId]() { removeSceneFromTab(name, tabId); });
+                       [this, sceneUuid, tabId]() { removeSceneFromTab(sceneUuid, tabId); });
 
     menu.addSeparator();
 
@@ -935,30 +1054,61 @@ void SceneWallWidget::onRealtimeToggled(bool on)
     }
 
     config.realtime = on;
-    saveWallConfig(config);
+    persistConfig();
 
-    const int ms = on ? realtimeIntervalMs() : 500;
-    for (SceneThumbnailWidget *w : m_thumbWidgets)
-        w->setRefreshInterval(ms);
+    // Apply the new rate to the shared timer; no modal here, the warning
+    // above already ran for the manual toggle (startup sets checked silent).
+    stopScheduler();
+    startScheduler();
 }
 
 int SceneWallWidget::realtimeIntervalMs() const
 {
     // Match the frame rate OBS is currently running at.
-    const double fps = obs_get_active_fps();
-    if (fps <= 0.0)
-        return 33;
-    return qMax(1, (int)qRound(1000.0 / fps));
+    return ThumbnailScheduler::realtimeIntervalForFps(obs_get_active_fps());
 }
 
-void SceneWallWidget::setTimersRunning(bool running)
+void SceneWallWidget::onSchedulerTick()
 {
-    for (SceneThumbnailWidget *w : m_thumbWidgets) {
-        if (running)
-            w->startTimer();
-        else
-            w->stopTimer();
+    if (m_thumbWidgets.isEmpty())
+        return;
+
+    if (config.realtime) {
+        for (SceneThumbnailWidget *w : m_thumbWidgets)
+            if (w && !w->collapsed() && w->isVisible())
+                w->renderIfVisible();
+        return;
     }
+
+    // Cheap eligibility first: collapsed, hidden-tab and hidden-dock widgets
+    // never consume GPU budget. The viewport clip is rechecked inside
+    // renderIfVisible(), which performs the expensive work.
+    QList<bool> eligible;
+    eligible.reserve(m_thumbWidgets.size());
+    for (SceneThumbnailWidget *w : m_thumbWidgets)
+        eligible.append(w && !w->collapsed() && w->isVisible());
+
+    const QList<int> picked = m_schedule.pickNext(eligible);
+    for (int i : picked) {
+        if (SceneThumbnailWidget *w = m_thumbWidgets.value(i, nullptr))
+            w->renderIfVisible();
+    }
+}
+
+void SceneWallWidget::startScheduler()
+{
+    if (!m_renderTimer || m_renderTimer->isActive() || m_thumbWidgets.isEmpty())
+        return;
+    if (!isVisible())
+        return; // showEvent resumes; hidden dock renders nothing
+    m_renderTimer->start(config.realtime ? realtimeIntervalMs()
+                                         : ThumbnailScheduler::NORMAL_INTERVAL_MS);
+}
+
+void SceneWallWidget::stopScheduler()
+{
+    if (m_renderTimer)
+        m_renderTimer->stop();
 }
 
 void SceneWallWidget::refreshGearIcon()
@@ -978,12 +1128,12 @@ void SceneWallWidget::changeEvent(QEvent *event)
 void SceneWallWidget::showEvent(QShowEvent *event)
 {
     QDockWidget::showEvent(event);
-    setTimersRunning(true);
+    startScheduler(); // resume round-robin where it stopped; no budget lost
 }
 
 void SceneWallWidget::hideEvent(QHideEvent *event)
 {
-    setTimersRunning(false);
+    stopScheduler();
     QDockWidget::hideEvent(event);
 }
 

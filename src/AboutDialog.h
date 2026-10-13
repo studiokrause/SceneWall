@@ -6,6 +6,7 @@
 #include <QPushButton>
 #include <QTextEdit>
 #include <QVBoxLayout>
+#include <obs-module.h>
 
 // Kept in sync with README.md.
 static const char *SCENEWALL_ABOUT_TEXT = R"README(SceneWall - OBS Studio Plugin
@@ -65,10 +66,10 @@ TABS AND ASSIGNMENT
   visible even while browsing All.
 
 INSTALLATION
-1. Copy SceneWall.dll to OBS_FOLDER/obs-plugins/64bit/
-2. Copy data/obs-plugins/SceneWall/ (the locale folder) to
-   OBS_FOLDER/data/obs-plugins/SceneWall/
-3. Restart OBS Studio.
+1. Copy SceneWall.dll to C:/ProgramData/obs-studio/plugins/SceneWall/
+   and the locale folder to C:/ProgramData/obs-studio/plugins/SceneWall/data/
+   (portable OBS: <portable>/plugins/SceneWall/ with data/ next to the DLL).
+2. Restart OBS Studio.
 
 SceneWall uses only libraries shipped with OBS (obs.dll, obs-frontend-api.dll,
 Qt6).
@@ -78,7 +79,7 @@ class AboutDialog : public QDialog {
 public:
     AboutDialog(QWidget *parent = nullptr) : QDialog(parent)
     {
-        setWindowTitle("About SceneWall");
+        setWindowTitle(obs_module_text("AboutTitle"));
         resize(660, 620);
 
         QVBoxLayout *layout = new QVBoxLayout(this);
@@ -91,7 +92,7 @@ public:
         title->setFont(font);
         layout->addWidget(title);
 
-        QLabel *version = new QLabel("Version 1.3", this);
+        QLabel *version = new QLabel(obs_module_text("AboutVersion"), this);
         version->setAlignment(Qt::AlignCenter);
         layout->addWidget(version);
 
@@ -130,7 +131,7 @@ public:
 
         QHBoxLayout *btnLayout = new QHBoxLayout();
         btnLayout->addStretch();
-        QPushButton *closeBtn = new QPushButton("Close", this);
+        QPushButton *closeBtn = new QPushButton(obs_module_text("Close"), this);
         btnLayout->addWidget(closeBtn);
         layout->addLayout(btnLayout);
 

@@ -36,7 +36,7 @@ public:
     FlowLayout *flowLayout() const { return m_layout; }
 
 signals:
-    void sceneDropped(const QString &sceneName, int index);
+    void sceneDropped(const QString &sceneUuid, int index);
 
 protected:
     void dragEnterEvent(QDragEnterEvent *event) override
@@ -62,13 +62,13 @@ protected:
         if (!event->mimeData()->hasFormat(MIME))
             return;
 
-        const QString name = QString::fromUtf8(event->mimeData()->data(MIME));
+        const QString uuid = QString::fromUtf8(event->mimeData()->data(MIME));
         const int index = computeDropIndex(event->position().toPoint());
 
         hideIndicator();
         event->acceptProposedAction();
 
-        emit sceneDropped(name, index);
+        emit sceneDropped(uuid, index);
     }
 
 private:

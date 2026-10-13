@@ -5,6 +5,7 @@
 #include <QColorDialog>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QMessageBox>
 #include <QSizePolicy>
 #include <QTableWidgetItem>
 #include <QUuid>
@@ -18,6 +19,8 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent)
     resize(288, 340);
 
     config = loadWallConfig();
+    collectionId = currentSceneCollectionKey();
+    CollectionConfig &collection = config.ensureCollection(collectionId);
 
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
 
@@ -49,7 +52,7 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent)
     btnLayout->addWidget(saveBtn);
     mainLayout->addLayout(btnLayout);
 
-    for (const TabConfig &tab : config.tabs)
+    for (const TabConfig &tab : collection.tabs)
         addTabRow(tab);
 
     connect(addBtn, &QPushButton::clicked, [this]() {
@@ -68,8 +71,9 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent)
         // The "All" tab is permanent and can never be removed.
         QTableWidgetItem *item = tabTable->item(row, 0);
         const QString id = item ? item->data(Qt::UserRole).toString() : QString();
-        const int ti = id.isEmpty() ? -1 : config.indexOfTab(id);
-        if (ti >= 0 && config.tabs[ti].isAll)
+        const CollectionConfig &collection = config.collections[config.indexOfCollection(collectionId)];
+        const int ti = id.isEmpty() ? -1 : collection.indexOfTab(id);
+        if (ti >= 0 && collection.tabs[ti].isAll)
             return;
 
         tabTable->removeRow(row);
@@ -157,6 +161,7 @@ void SettingsDialog::saveSettings()
     // Match rows back to tabs by id (not by position), preserving the "All"
     // flag and per-tab scene lists. Tabs removed from the table are dropped.
     QList<TabConfig> updated;
+    CollectionConfig &collection = config.ensureCollection(collectionId);
 
     for (int i = 0; i < tabTable->rowCount(); ++i) {
         QTableWidgetItem *nameItem = tabTable->item(i, 0);
@@ -164,11 +169,16 @@ void SettingsDialog::saveSettings()
             continue;
 
         const QString id = nameItem->data(Qt::UserRole).toString();
-        const int existing = id.isEmpty() ? -1 : config.indexOfTab(id);
+        int existing = -1;
+        for (int j = 0; j < collection.tabs.size(); ++j)
+            if (collection.tabs[j].id == id) {
+                existing = j;
+                break;
+            }
 
         TabConfig tab;
         if (existing >= 0)
-            tab = config.tabs[existing];
+            tab = collection.tabs[existing];
         else
             tab.id = id.isEmpty() ? QUuid::createUuid().toString(QUuid::WithoutBraces) : id;
 
@@ -184,7 +194,13 @@ void SettingsDialog::saveSettings()
         updated.append(tab);
     }
 
-    config.tabs = updated;
-    saveWallConfig(config);
+    collection.tabs = updated;
+    // Stay open on failure so the user's edits are not silently discarded.
+    if (!saveWallConfig(config)) {
+        QMessageBox::warning(this, tr("SceneWall"),
+                             tr("Could not save the SceneWall configuration. "
+                                "Check the config file and try again."));
+        return;
+    }
     accept();
 }

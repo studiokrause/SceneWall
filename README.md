@@ -25,16 +25,19 @@ Everything below mirrors vMix's source list. The three items marked **(added by 
 ### Thumbnails and layout
 
 - **Live scene thumbnails** rendered through the OBS graphics subsystem.
-- **Full grabbing of all sources** — every thumbnail keeps its scene showing (the same `obs_source_inc_showing` mechanism the native Multiview uses), so game capture, display/window capture, browser and media sources stay live even when the scene is neither in Preview nor Program.
+- **Inactive scenes stay live (Multiview model)** — every thumbnail holds its scene showing (the same `obs_source_inc_showing` / `obs_source_dec_showing` mechanism the native Multiview uses), so game capture, display/window capture, browser and media sources keep rendering even when the scene is neither in Preview nor Program.
 - **Wrapping layout** — thumbnails and collapsed bars reflow like a flex container when the dock is resized.
 - **Autosize** **(added by SceneWall)** — computes the largest size that fits every scene of the current tab in the visible area, then applies it to all tabs. Collapsed bars count as narrower, so packing stays efficient.
-- **Realtime mode** **(added by SceneWall)** — refreshes at the frame rate OBS is currently running at, after a resource-usage confirmation.
+- **Realtime mode** **(added by SceneWall)** — refreshes every visible thumbnail at the frame rate OBS is currently running at, after a resource-usage confirmation. Realtime raises CPU/GPU cost noticeably with many scenes; normal mode uses a cheap 500 ms scheduler.
+- **Budgeted scheduler** — normal mode uses one shared timer with a fixed cap on GPU readbacks per tick (2). Hidden dock, other tabs, collapsed scenes and off-screen thumbnails cost nothing.
 - **Optimized rendering** — GPU scratch buffers are allocated once per thumbnail and reused, and anything not actually visible (hidden dock, other tab, scrolled out of view) is skipped entirely.
 
 ### Tabs and scenes
 
 - **Tab groups with colors** used for the tab buttons and for the headers of the scenes assigned to them.
-- **Scene assignment** keyed by a **stable tab ID**, so renaming or reordering a tab never loses its scenes.
+- **Scene assignment** keyed by the scene's **stable UUID**, so renaming a scene never loses its tab, order or collapsed state.
+- **Per-collection config** — tabs, scene order and collapsed state are stored separately for each OBS scene collection and restored when you switch collections.
+- **Migration** — configs from older SceneWall versions (scene names instead of UUIDs) migrate automatically on load; removed scenes drop out of the lists without shifting other scenes onto their slots.
 - **Naming and reordering tabs** **(added by SceneWall)** — tabs can be named and their order changed by dragging a tab button to a new position; both are saved between sessions.
 - **Drag & drop reordering of scenes** — drag a thumbnail inside a tab to reorder it. Each tab keeps its own order, completely independent of the scene list in OBS. Saved between sessions.
 
@@ -43,6 +46,19 @@ Everything below mirrors vMix's source list. The three items marked **(added by 
 - **Scene headers** with white text on a configurable background color. Right-click a header to collapse the scene into a slim vertical bar; right-click again to expand it.
 - **Thumbnail frames** — every thumbnail is outlined with a thin 1px grey frame so scenes are visually separated. The active scene stands out with a thicker frame: red for the current Program scene, green for the current Preview scene in Studio Mode.
 - **Localization** — English, German, Polish, Ukrainian, Italian, Spanish and French. The default title of the **All** tab is translated too.
+
+## Changes in 1.4
+
+- Adapted Windows packaging to the OBS 33 plugin layout.
+- Kept inactive capture, browser and media scenes rendering like native Multiview.
+- Restored full per-thumbnail refresh in Realtime mode; normal mode keeps the GPU budget.
+- Corrected Autosize to follow layout order, margins, collapsed bars and available width.
+- Stored scene assignments, order and collapsed state by stable UUID per scene collection.
+- Fixed scene drag reordering so it does not delete the active drag source.
+
+### What SceneWall does not do
+
+SceneWall only shows scenes and switches between them. It does not control sources: no visibility toggles, no locking, no audio mute and no volume metering.
 
 ## Mouse and keyboard
 
@@ -63,26 +79,56 @@ Everything below mirrors vMix's source list. The three items marked **(added by 
 
 ## Installation
 
-1. Copy `SceneWall.dll` to `OBS_FOLDER/obs-plugins/64bit/`
-2. Copy the `locale` folder to `OBS_FOLDER/data/obs-plugins/SceneWall/`
-3. Restart OBS Studio
+### Release archive
+
+`SceneWall-1.4-OBS33-Windows-x64.zip` contains this layout:
+
+```text
+README.md
+plugins/
+└── SceneWall/
+    ├── SceneWall.dll
+    └── data/
+        └── locale/*.ini
+```
+
+Extract archive contents into OBS root:
+
+- Installed OBS: `C:\ProgramData\obs-studio\`
+- Portable OBS: `<portable>\`
+
+Resulting plugin path is `plugins/SceneWall/SceneWall.dll`, with locale files beside it under `plugins/SceneWall/data/locale/`.
+
+Restart OBS Studio after installation.
+
+Manual copy, installed OBS:
+
+1. Copy `SceneWall.dll` to `C:\ProgramData\obs-studio\plugins\SceneWall\`
+2. Copy the `locale` folder to `C:\ProgramData\obs-studio\plugins\SceneWall\data\`
+
+Manual copy, portable OBS:
+
+1. Copy `SceneWall.dll` to `<portable>\plugins\SceneWall\`
+2. Copy the `locale` folder to `<portable>\plugins\SceneWall\data\`
 
 SceneWall uses only libraries shipped with OBS (`obs.dll`, `obs-frontend-api.dll`, Qt6).
 
 ## Building from source
 
-Requirements: Windows 10/11 x64, Visual Studio 2019/2022 (MSVC x64), CMake 3.16+, an installed OBS SDK and a Qt6 CMake package. The paths are set at the top of `CMakeLists.txt`:
+Requirements: Windows 10/11 x64, Visual Studio 2019/2022 (MSVC x64), CMake 3.16+, an installed OBS SDK and a Qt6 CMake package. Pass both as cache variables — no paths are hardcoded:
 
 ```powershell
-cmake -S . -B build
+cmake -S . -B build -DOBS_SDK_DIR=<path-to-obs-sdk> -DOBS_QT_CMAKE_DIR=<path-to-Qt6-cmake>
 cmake --build build --config Release
 ```
 
-The resulting `build/Release/SceneWall.dll` is the plugin.
+`OBS_QT_CMAKE_DIR` is optional; when given it is appended to `CMAKE_PREFIX_PATH`. Without it, CMake uses the Qt6 package from the default search path.
+
+The resulting `build/Release/SceneWall.dll` is the plugin. `cmake --install build --config Release` installs the OBS 33 bundle layout: `SceneWall.dll` next to `data/locale/*.ini` under `plugins/SceneWall`.
 
 ## Version
 
-The current version is **1.3**.
+The current version is **1.4**.
 
 ## License
 
