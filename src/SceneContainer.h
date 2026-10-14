@@ -13,6 +13,8 @@
 #include <QPoint>
 #include <QRect>
 #include <QWidget>
+#include <QApplication>
+#include <QContextMenuEvent>
 
 class SceneContainer : public QWidget {
     Q_OBJECT
@@ -37,8 +39,22 @@ public:
 
 signals:
     void sceneDropped(const QString &sceneUuid, int index);
+    void emptyAreaMenuRequested(QPoint globalPos);
 
 protected:
+    void contextMenuEvent(QContextMenuEvent *event) override
+    {
+        // Plain right-click on empty panel area (never CTRL+click, which is
+        // reserved for the thumbnail menu). Child thumbnails accept their own
+        // presses, so this only fires on the container background.
+        if (QApplication::keyboardModifiers() & Qt::ControlModifier) {
+            event->ignore();
+            return;
+        }
+        event->accept();
+        emit emptyAreaMenuRequested(event->globalPos());
+    }
+
     void dragEnterEvent(QDragEnterEvent *event) override
     {
         if (event->mimeData()->hasFormat(MIME)) {

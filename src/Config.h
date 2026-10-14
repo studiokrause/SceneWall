@@ -21,6 +21,7 @@ struct TabConfig {
     QString name; // empty + isAll -> translated "All"
     QString colorHex = "#808080";
     bool isAll = false;
+    int thumbSize = 160; // per-tab thumbnail size, slider range 80-400
     QStringList scenes; // stable OBS scene-source UUIDs, in tab order
     QStringList legacySceneNames; // consumed once when migrating pre-v3 configs
 
@@ -46,10 +47,9 @@ struct CollectionConfig {
 };
 
 struct WallConfig {
-    static constexpr int CURRENT_VERSION = 3;
+    static constexpr int CURRENT_VERSION = 4;
 
     int version = CURRENT_VERSION;
-    int thumbSize = 160;
     bool realtime = true;
     QList<CollectionConfig> collections;
 
@@ -136,9 +136,6 @@ inline bool normalizeUuid(QString *value)
 
 inline bool valid(const WallConfig &config, bool allowLegacySceneNames = false)
 {
-    if (config.thumbSize < MIN_THUMB_SIZE || config.thumbSize > MAX_THUMB_SIZE)
-        return false;
-
     QSet<QString> collectionIds;
     for (const CollectionConfig &collection : config.collections) {
         if (collectionIds.contains(collection.collectionId))
@@ -152,6 +149,9 @@ inline bool valid(const WallConfig &config, bool allowLegacySceneNames = false)
                 (!allowLegacySceneNames && !tab.legacySceneNames.isEmpty()))
                 return false;
             tabIds.insert(tabId);
+
+            if (tab.thumbSize < MIN_THUMB_SIZE || tab.thumbSize > MAX_THUMB_SIZE)
+                return false;
 
             QSet<QString> scenes;
             for (const QString &sceneUuid : tab.scenes) {
@@ -185,7 +185,8 @@ inline bool stringArray(const QJsonValue &value, QStringList *strings)
     return true;
 }
 
-inline bool parseTab(const QJsonValue &value, bool legacyNames, bool strict, TabConfig *tab)
+inline bool parseTab(const QJsonValue &value, bool legacyNames, bool strict, TabConfig *tab,
+                     int fallbackThumbSize = 160)
 {
     if (!value.isObject())
         return false;
@@ -200,6 +201,9 @@ inline bool parseTab(const QJsonValue &value, bool legacyNames, bool strict, Tab
     tab->name = object.value("name").toString();
     tab->colorHex = object.value("color").toString("#808080");
     tab->isAll = object.value("isAll").toBool(false);
+    // Missing size falls back to the pre-v4 global default (v4 tabs always
+    // write their own); out-of-range values are rejected later by valid().
+    tab->thumbSize = object.value("thumbSize").toInt(fallbackThumbSize);
 
     if (strict && !normalizeUuid(&tab->id))
         return false;
@@ -279,11 +283,50 @@ inline bool parseConfig(const QByteArray &raw, const QString &legacyCollectionId
                 config.collections.append(collection);
             }
 
+            if (root.contains("realtime")) {
+                if (!root.value("realtime").isBool())
+                    return false;
+                config.realtime = root.value("realtime").toBool();
+            }
+        } else if (version == 3) {
+            // v3 stored one global thumbSize: every tab inherits it on upgrade.
+            int legacyThumbSize = 160;
             if (root.contains("thumbSize")) {
                 if (!root.value("thumbSize").isDouble())
                     return false;
-                config.thumbSize = root.value("thumbSize").toInt(-1);
+                legacyThumbSize = root.value("thumbSize").toInt(-1);
             }
+            if (!root.value("collections").isArray())
+                return false;
+            for (const QJsonValue &value : root.value("collections").toArray()) {
+                if (!value.isObject())
+                    return false;
+                const QJsonObject source = value.toObject();
+                if (!source.value("collectionId").isString() || !source.value("tabs").isArray() ||
+                    !source.value("collapsedScenes").isArray())
+                    return false;
+
+                CollectionConfig collection;
+                collection.collectionId = source.value("collectionId").toString();
+                for (const QJsonValue &tabValue : source.value("tabs").toArray()) {
+                    TabConfig tab;
+                    if (!parseTab(tabValue, false, true, &tab, legacyThumbSize))
+                        return false;
+                    collection.tabs.append(tab);
+                }
+
+                QStringList collapsed;
+                if (!stringArray(source.value("collapsedScenes"), &collapsed))
+                    return false;
+                for (QString &sceneUuid : collapsed)
+                    if (!normalizeUuid(&sceneUuid))
+                        return false;
+                collection.collapsedScenes = QSet<QString>(collapsed.begin(), collapsed.end());
+                if (collection.collapsedScenes.size() != collapsed.size())
+                    return false;
+                config.collections.append(collection);
+            }
+
             if (root.contains("realtime")) {
                 if (!root.value("realtime").isBool())
                     return false;
@@ -292,20 +335,21 @@ inline bool parseConfig(const QByteArray &raw, const QString &legacyCollectionId
         } else if (version == 2) {
             if (!root.value("tabs").isArray())
                 return false;
+            int legacyThumbSize = 160;
+            if (root.contains("thumbSize")) {
+                if (!root.value("thumbSize").isDouble())
+                    return false;
+                legacyThumbSize = root.value("thumbSize").toInt(-1);
+            }
             CollectionConfig collection;
             collection.collectionId = legacyCollectionId;
             for (const QJsonValue &value : root.value("tabs").toArray()) {
                 TabConfig tab;
-                if (!parseTab(value, true, false, &tab))
+                if (!parseTab(value, true, false, &tab, legacyThumbSize))
                     return false;
                 collection.tabs.append(tab);
             }
             config.collections.append(collection);
-            if (root.contains("thumbSize")) {
-                if (!root.value("thumbSize").isDouble())
-                    return false;
-                config.thumbSize = root.value("thumbSize").toInt(-1);
-            }
             if (root.contains("realtime")) {
                 if (!root.value("realtime").isBool())
                     return false;
@@ -341,6 +385,7 @@ inline QJsonObject tabObject(const TabConfig &tab)
     object["name"] = tab.name;
     object["color"] = tab.colorHex;
     object["isAll"] = tab.isAll;
+    object["thumbSize"] = tab.thumbSize;
     object["scenes"] = scenes;
     return object;
 }
@@ -366,7 +411,6 @@ inline QByteArray serialize(const WallConfig &config)
 
     QJsonObject root;
     root["version"] = WallConfig::CURRENT_VERSION;
-    root["thumbSize"] = config.thumbSize;
     root["realtime"] = config.realtime;
     root["collections"] = collections;
     return QJsonDocument(root).toJson(QJsonDocument::Indented);

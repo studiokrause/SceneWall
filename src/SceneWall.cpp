@@ -1,4 +1,5 @@
 #include "SceneWall.h"
+#include "AboutDialog.h"
 #include "SettingsDialog.h"
 
 #include <QDrag>
@@ -514,7 +515,7 @@ SceneWallWidget::SceneWallWidget(QWidget *parent) : QDockWidget(parent)
 
     sizeSlider = new QSlider(Qt::Horizontal, this);
     sizeSlider->setRange(80, 400);
-    sizeSlider->setValue(config.thumbSize);
+    sizeSlider->setValue(160); // synced to the current tab at the end of loadTabs
     sizeSlider->setFixedWidth(110);
 
     autosizeBtn = new QPushButton(obs_module_text("Autosize"), this);
@@ -550,6 +551,8 @@ SceneWallWidget::SceneWallWidget(QWidget *parent) : QDockWidget(parent)
     connect(settingsBtn, &QPushButton::clicked, this, &SceneWallWidget::openSettings);
     connect(tabContainer->sceneTabBar(), &QTabBar::tabMoved, this,
             &SceneWallWidget::onTabMoved);
+    connect(tabContainer, &QTabWidget::currentChanged, this,
+            &SceneWallWidget::onTabChanged);
 
     // Rebuild when OBS's own scene list changes (add / remove / rename), so
     // every tab stays in sync without reopening the panel.
@@ -566,6 +569,7 @@ SceneWallWidget::SceneWallWidget(QWidget *parent) : QDockWidget(parent)
 
 SceneWallWidget::~SceneWallWidget()
 {
+    saveWallConfig(config); // silent: never modal during OBS shutdown
     obs_frontend_remove_event_callback(onFrontendEvent, this);
 }
 
@@ -747,12 +751,14 @@ void SceneWallWidget::loadTabs()
         SceneContainer *container = new SceneContainer();
         connect(container, &SceneContainer::sceneDropped, this,
                 &SceneWallWidget::onSceneDropped);
+        connect(container, &SceneContainer::emptyAreaMenuRequested, this,
+                &SceneWallWidget::onEmptyAreaMenu);
 
         for (const QString &sceneUuid : tab.scenes) {
             if (!sourcesByUuid.contains(sceneUuid))
                 continue;
             SceneThumbnailWidget *w = new SceneThumbnailWidget(sourcesByUuid.value(sceneUuid), container);
-            w->setThumbSize(config.thumbSize);
+            w->setThumbSize(tab.thumbSize);
             w->setBarColor(ownerColor.value(sceneUuid, allColor));
             connect(w, &SceneThumbnailWidget::menuRequested, this, &SceneWallWidget::onSceneMenu);
             connect(w, &SceneThumbnailWidget::collapseToggled, this,
@@ -782,6 +788,10 @@ void SceneWallWidget::loadTabs()
     if (previousIndex >= 0 && previousIndex < tabContainer->count())
         tabContainer->setCurrentIndex(previousIndex);
 
+    // The tab set may have changed (loadTabs runs blocked), so sync the
+    // slider to whatever tab is current now.
+    onTabChanged(tabContainer->currentIndex());
+
     reflowAll();
     // An empty snapshot (OBS startup / collection switch) proves nothing:
     // never persist it over saved assignments.
@@ -792,12 +802,52 @@ void SceneWallWidget::loadTabs()
 
 void SceneWallWidget::applyThumbSize(int size)
 {
-    config.thumbSize = size;
-    // One size for every tab; Autosize is only *computed* from the current tab.
-    for (SceneThumbnailWidget *w : m_thumbWidgets)
-        w->setThumbSize(size);
+    // Per-tab size: only the active tab's config and thumbnails change.
+    CollectionConfig &collection = currentCollection();
+    const int ti = collection.indexOfTab(currentTabId());
+    if (ti < 0)
+        return;
+    collection.tabs[ti].thumbSize = size;
+
+    QScrollArea *scroll = qobject_cast<QScrollArea *>(tabContainer->currentWidget());
+    SceneContainer *container =
+            scroll ? qobject_cast<SceneContainer *>(scroll->widget()) : nullptr;
+    if (container)
+        for (SceneThumbnailWidget *w : container->findChildren<SceneThumbnailWidget *>())
+            w->setThumbSize(size);
     persistConfig();
 
+    reflowAll();
+}
+
+int SceneWallWidget::currentTabThumbSize() const
+{
+    const int ci = config.indexOfCollection(m_collectionId);
+    if (ci < 0)
+        return 160;
+    const CollectionConfig &collection = config.collections[ci];
+    const int i = tabContainer->currentIndex();
+    if (i < 0 || i >= collection.tabs.size())
+        return 160;
+    return collection.tabs[i].thumbSize;
+}
+
+void SceneWallWidget::onTabChanged(int)
+{
+    // Sync the slider to the newly active tab without writing back: the
+    // value already lives in that tab's config.
+    sizeSlider->blockSignals(true);
+    sizeSlider->setValue(currentTabThumbSize());
+    sizeSlider->blockSignals(false);
+
+    QScrollArea *scroll = qobject_cast<QScrollArea *>(tabContainer->currentWidget());
+    SceneContainer *container =
+            scroll ? qobject_cast<SceneContainer *>(scroll->widget()) : nullptr;
+    if (!container)
+        return;
+    const int size = currentTabThumbSize();
+    for (SceneThumbnailWidget *w : container->findChildren<SceneThumbnailWidget *>())
+        w->setThumbSize(size);
     reflowAll();
 }
 
@@ -831,21 +881,23 @@ void SceneWallWidget::onCollapseToggled(const QString &sceneUuid, bool collapsed
 
 int SceneWallWidget::computeAutosize() const
 {
+    // Autosize is computed from, and applied to, the current tab only.
+    const int fallback = currentTabThumbSize();
     QScrollArea *scroll = qobject_cast<QScrollArea *>(tabContainer->currentWidget());
     if (!scroll)
-        return config.thumbSize;
+        return fallback;
 
     const QSize avail = scroll->viewport()->size();
     if (avail.width() <= 0 || avail.height() <= 0)
-        return config.thumbSize;
+        return fallback;
 
     SceneContainer *container = qobject_cast<SceneContainer *>(scroll->widget());
     if (!container)
-        return config.thumbSize;
+        return fallback;
 
     FlowLayout *layout = container->flowLayout();
     if (!layout || layout->count() == 0)
-        return config.thumbSize;
+        return fallback;
 
     const int MIN = sizeSlider->minimum();
     const int MAX = sizeSlider->maximum();
@@ -1043,6 +1095,17 @@ void SceneWallWidget::onSceneMenu(SceneThumbnailWidget *widget, QPoint globalPos
 
     menu.addAction(obs_module_text("AddScene"), [this]() { addScene(); });
 
+    menu.exec(globalPos);
+}
+
+void SceneWallWidget::onEmptyAreaMenu(QPoint globalPos)
+{
+    QMenu menu;
+    menu.addAction(obs_module_text("AddScene"), [this]() { addScene(); });
+    menu.addAction(obs_module_text("About"), [this]() {
+        AboutDialog dialog(this);
+        dialog.exec();
+    });
     menu.exec(globalPos);
 }
 

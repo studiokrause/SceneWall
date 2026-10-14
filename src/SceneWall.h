@@ -5,6 +5,7 @@
 #include "ToggleSwitch.h"
 
 #include <QColor>
+#include <QContextMenuEvent>
 #include <QDockWidget>
 #include <QHideEvent>
 #include <QIcon>
@@ -121,6 +122,12 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
+    void contextMenuEvent(QContextMenuEvent *event) override
+    {
+        // Swallow: the Add scene / About menu belongs to the container
+        // background only (QWidget's default would ignore and bubble up).
+        event->accept();
+    }
     QSize sizeHint() const override;
 
 private:
@@ -153,8 +160,10 @@ private slots:
     void applyThumbSize(int size);
     void runAutosize();
     void onTabMoved(int from, int to);
+    void onTabChanged(int index);
     void onSceneDropped(const QString &sceneUuid, int index);
     void onSceneMenu(SceneThumbnailWidget *widget, QPoint globalPos);
+    void onEmptyAreaMenu(QPoint globalPos);
     void renameScene(const QString &oldName);
     void addScene();
     void onRealtimeToggled(bool on);
@@ -192,6 +201,7 @@ private:
     void assignSceneToTab(const QString &sceneUuid, const QString &tabId);
     void removeSceneFromTab(const QString &sceneUuid, const QString &tabId);
     void moveSceneInTab(const QString &sceneUuid, int index);
+    int currentTabThumbSize() const; // active tab's size, 160 when unknown
     int computeAutosize() const;
 
     int realtimeIntervalMs() const;

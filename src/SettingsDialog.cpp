@@ -1,5 +1,4 @@
 #include "SettingsDialog.h"
-#include "AboutDialog.h"
 
 #include <QAbstractItemView>
 #include <QColorDialog>
@@ -43,11 +42,9 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent)
     QHBoxLayout *btnLayout = new QHBoxLayout();
     QPushButton *addBtn = new QPushButton(obs_module_text("AddTab"), this);
     QPushButton *removeBtn = new QPushButton(obs_module_text("RemoveTab"), this);
-    QPushButton *aboutBtn = new QPushButton(obs_module_text("About"), this);
     QPushButton *saveBtn = new QPushButton(obs_module_text("Save"), this);
     btnLayout->addWidget(addBtn);
     btnLayout->addWidget(removeBtn);
-    btnLayout->addWidget(aboutBtn);
     btnLayout->addStretch();
     btnLayout->addWidget(saveBtn);
     mainLayout->addLayout(btnLayout);
@@ -77,11 +74,6 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent)
             return;
 
         tabTable->removeRow(row);
-    });
-
-    connect(aboutBtn, &QPushButton::clicked, [this]() {
-        AboutDialog dialog(this);
-        dialog.exec();
     });
 
     connect(saveBtn, &QPushButton::clicked, this, &SettingsDialog::saveSettings);

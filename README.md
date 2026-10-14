@@ -4,7 +4,7 @@
 
 All of the functionality is taken from vMix: live thumbnails, tab groups with colors, collapsible scene bars, a wrapping (flex-like) layout, Program/Preview indicators and the surrounding mouse interactions. SceneWall adds only three things of its own:
 
-- **Size / Autosize** — a thumbnail size slider plus one-click Autosize
+- **Size / Autosize** — a per-tab thumbnail size slider plus one-click Autosize
 - **Realtime** — a toggle for high-frequency thumbnail refresh
 - **Naming and reordering tabs** — the ability to name tabs and change their order
 
@@ -16,7 +16,7 @@ All of the functionality is taken from vMix: live thumbnails, tab groups with co
 
 A dock panel that shows the scenes of the current scene collection as live thumbnails in a wrapping grid that reflows to the width of the dock. Built for operators who work with many scenes (cameras, overlays, helpers) and want to see them all at once — similar to a video switcher's multiview.
 
-Scenes can be collapsed into compact vertical bars and the grid reflows as the dock is resized. On top of the vMix behaviour, the thumbnail size can be set with a slider or with a single *Autosize* click.
+Scenes can be collapsed into compact vertical bars and the grid reflows as the dock is resized. On top of the vMix behaviour, each tab keeps its own thumbnail size, set with the Size slider or with a single *Autosize* click; switching tabs moves the slider to the active tab's size.
 
 ## Features
 
@@ -27,7 +27,7 @@ Everything below mirrors vMix's source list. The three items marked **(added by 
 - **Live scene thumbnails** rendered through the OBS graphics subsystem.
 - **Inactive scenes stay live (Multiview model)** — every thumbnail holds its scene showing (the same `obs_source_inc_showing` / `obs_source_dec_showing` mechanism the native Multiview uses), so game capture, display/window capture, browser and media sources keep rendering even when the scene is neither in Preview nor Program.
 - **Wrapping layout** — thumbnails and collapsed bars reflow like a flex container when the dock is resized.
-- **Autosize** **(added by SceneWall)** — computes the largest size that fits every scene of the current tab in the visible area, then applies it to all tabs. Collapsed bars count as narrower, so packing stays efficient.
+- **Autosize** **(added by SceneWall)** — computes the largest size that fits every scene of the current tab in the visible area, then applies it to that tab only. Collapsed bars count as narrower, so packing stays efficient.
 - **Realtime mode** **(added by SceneWall)** — refreshes every visible thumbnail at the frame rate OBS is currently running at, after a resource-usage confirmation. Realtime raises CPU/GPU cost noticeably with many scenes; normal mode uses a cheap 500 ms scheduler.
 - **Budgeted scheduler** — normal mode uses one shared timer with a fixed cap on GPU readbacks per tick (2). Hidden dock, other tabs, collapsed scenes and off-screen thumbnails cost nothing.
 - **Optimized rendering** — GPU scratch buffers are allocated once per thumbnail and reused, and anything not actually visible (hidden dock, other tab, scrolled out of view) is skipped entirely.
@@ -46,6 +46,12 @@ Everything below mirrors vMix's source list. The three items marked **(added by 
 - **Scene headers** with white text on a configurable background color. Right-click a header to collapse the scene into a slim vertical bar; right-click again to expand it.
 - **Thumbnail frames** — every thumbnail is outlined with a thin 1px grey frame so scenes are visually separated. The active scene stands out with a thicker frame: red for the current Program scene, green for the current Preview scene in Studio Mode.
 - **Localization** — English, German, Polish, Ukrainian, Italian, Spanish and French. The default title of the **All** tab is translated too.
+
+## Changes in 1.6
+
+- Thumbnail size is stored per tab: each tab keeps its own Size slider value, Autosize applies to the active tab only, and switching tabs moves the slider to that tab's size. Old configs migrate automatically.
+- Right-click on an empty panel area opens a small menu with *Add scene* and *About*; the About button was removed from the Settings dialog.
+- Release packaging unchanged (OBS 33 bundle layout).
 
 ## Changes in 1.4
 
@@ -67,7 +73,8 @@ SceneWall only shows scenes and switches between them. It does not control sourc
 | **Left click** on a thumbnail | Switch to that scene |
 | **Left drag** on a thumbnail | Reorder it inside the current tab |
 | **Right click** on a scene header | Collapse / expand that scene |
-| **Right click** on a thumbnail | In Studio Mode, set it as the Preview scene. A plain right-click never opens a menu |
+| **Right click** on a thumbnail | In Studio Mode, set it as the Preview scene. A plain right-click on a thumbnail never opens a menu |
+| **Right click** on an empty panel area | Small menu: *Add scene*, *About* |
 | **CTRL + click** on a thumbnail | Plugin menu: *Assign to Tab*, *Remove from Tab*, *Collapse / Expand*, *Filters*, *Rename*, *Add scene* |
 
 ## Tabs and assignment
@@ -81,7 +88,7 @@ SceneWall only shows scenes and switches between them. It does not control sourc
 
 ### Release archive
 
-`SceneWall-1.4-OBS33-Windows-x64.zip` contains this layout:
+`SceneWall-1.6-OBS33-Windows-x64.zip` contains this layout:
 
 ```text
 README.md
@@ -128,7 +135,7 @@ The resulting `build/Release/SceneWall.dll` is the plugin. `cmake --install buil
 
 ## Version
 
-The current version is **1.5**.
+The current version is **1.6**.
 
 ## License
 
@@ -145,5 +152,5 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 ## Credits
 
 - **Author:** Studio Krause
-- **Model / development:** Tencent Hy4 Preview
+- **Model / development:** Tencent Hy4 Preview / Muse Spark 1.3
 - **Companion plugin:** [studio-no-transition-strip](https://github.com/studiokrause/studio-no-transition-strip)

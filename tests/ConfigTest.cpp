@@ -25,12 +25,13 @@ QString uuid(char digit)
     return QString("00000000-0000-0000-0000-00000000000%1").arg(digit);
 }
 
-TabConfig tab(const QString &id, const QStringList &scenes)
+TabConfig tab(const QString &id, const QStringList &scenes, int thumbSize = 160)
 {
     TabConfig result;
     result.id = id;
     result.name = id;
     result.scenes = scenes;
+    result.thumbSize = thumbSize;
     return result;
 }
 
@@ -62,29 +63,36 @@ void testRoundTripAndCollectionIsolation(const QString &directory)
 {
     const QString path = directory + "/roundtrip.json";
     check(WallConfig().realtime, "new config defaults realtime on");
+    check(TabConfig().thumbSize == 160, "new tab defaults thumbnail size 160");
     WallConfig original;
-    original.thumbSize = 224;
     original.realtime = true;
 
-    CollectionConfig first = collection("Studio A", {tab(uuid('1'), {uuid('a')})});
+    CollectionConfig first =
+            collection("Studio A", {tab(uuid('1'), {uuid('a')}, 224)});
     first.collapsedScenes.insert(uuid('a'));
-    CollectionConfig second = collection("Studio B", {tab(uuid('2'), {uuid('b')})});
+    CollectionConfig second =
+            collection("Studio B", {tab(uuid('2'), {uuid('b')}, 120)});
     second.collapsedScenes.insert(uuid('b'));
     original.collections = {first, second};
 
     check(saveWallConfig(original, path), "save versioned config");
     const WallConfig loaded = loadWallConfig(path);
-    check(loaded.thumbSize == 224 && loaded.realtime, "round-trip global settings");
+    check(loaded.realtime, "round-trip global settings");
+    check(loaded.version == WallConfig::CURRENT_VERSION, "round-trip current version");
     check(loaded.collections.size() == 2, "round-trip separate collections");
     if (loaded.collections.size() == 2) {
         check(loaded.collections[0].collectionId == "Studio A", "first collection key preserved");
         check(loaded.collections[0].tabs[0].scenes == QStringList{uuid('a')},
               "first collection scene UUID preserved");
+        check(loaded.collections[0].tabs[0].thumbSize == 224,
+              "first tab keeps its own thumbnail size");
         check(loaded.collections[0].collapsedScenes.contains(uuid('a')),
               "first collection collapse state preserved");
         check(loaded.collections[1].collectionId == "Studio B", "second collection isolated");
         check(loaded.collections[1].tabs[0].scenes == QStringList{uuid('b')},
               "second collection scenes isolated");
+        check(loaded.collections[1].tabs[0].thumbSize == 120,
+              "second tab keeps its own thumbnail size");
         check(loaded.collections[1].collapsedScenes.contains(uuid('b')),
               "second collection collapse state isolated");
     }
@@ -113,7 +121,7 @@ void testLegacyNameMigration(const QString &directory)
     QJsonArray scenes{QStringLiteral("Intro"), QStringLiteral("Ambiguous"), QStringLiteral("Missing")};
     QJsonObject legacyTab{{"id", uuid('4')}, {"name", "Main"}, {"color", "#123456"},
                           {"scenes", scenes}};
-    QJsonObject legacy{{"version", 2}, {"thumbSize", 160}, {"realtime", false},
+    QJsonObject legacy{{"version", 2}, {"thumbSize", 200}, {"realtime", false},
                        {"tabs", QJsonArray{legacyTab}}};
     writeFile(path, QJsonDocument(legacy).toJson());
 
@@ -129,6 +137,80 @@ void testLegacyNameMigration(const QString &directory)
         check(loaded.collections[0].collectionId == "Studio", "legacy collection key assigned");
         check(migrated.scenes == QStringList{uuid('d')}, "only exact unique legacy name migrated");
         check(migrated.legacySceneNames.isEmpty(), "legacy names consumed once");
+        check(migrated.thumbSize == 200, "legacy global size becomes the tab size");
+    }
+}
+
+void testV3GlobalSizeMigratesToTabs(const QString &directory)
+{
+    const QString path = directory + "/v3.json";
+    QJsonObject v3tab{{"id", uuid('4')}, {"name", "Main"}, {"color", "#123456"},
+                      {"isAll", false}, {"scenes", QJsonArray{}}};
+    QJsonObject v3collection{{"collectionId", "Studio"}, {"tabs", QJsonArray{v3tab}},
+                             {"collapsedScenes", QJsonArray{}}};
+    QJsonObject v3{{"version", 3}, {"thumbSize", 250}, {"realtime", true},
+                   {"collections", QJsonArray{v3collection}}};
+    writeFile(path, QJsonDocument(v3).toJson());
+
+    const WallConfig loaded = loadWallConfig(path, "Studio");
+    check(loaded.version == WallConfig::CURRENT_VERSION, "v3 config upgraded to current version");
+    check(loaded.collections.size() == 1, "v3 collections preserved");
+    if (loaded.collections.size() == 1 && !loaded.collections[0].tabs.isEmpty())
+        check(loaded.collections[0].tabs[0].thumbSize == 250,
+              "v3 global size becomes each tab size");
+}
+
+void testInvalidPerTabSizeRejected(const QString &directory)
+{
+    // Out-of-range per-tab size fails validation, so the whole file is
+    // rejected and the loader falls back to defaults.
+    const QString path = directory + "/badtab.json";
+    WallConfig config;
+    config.collections = {collection("Studio", {tab(uuid('1'), {}, 401)})};
+    check(!saveWallConfig(config, path), "reject per-tab size above maximum");
+    config.collections[0].tabs[0].thumbSize = 79;
+    check(!saveWallConfig(config, path), "reject per-tab size below minimum");
+
+    QJsonObject badTab{{"id", uuid('1')}, {"name", "Main"}, {"color", "#808080"},
+                       {"isAll", false}, {"thumbSize", 500}, {"scenes", QJsonArray{}}};
+    QJsonObject badCollection{{"collectionId", "Studio"}, {"tabs", QJsonArray{badTab}},
+                              {"collapsedScenes", QJsonArray{}}};
+    QJsonObject badRoot{{"version", 4}, {"realtime", true},
+                        {"collections", QJsonArray{badCollection}}};
+    writeFile(path, QJsonDocument(badRoot).toJson());
+    const WallConfig loaded = loadWallConfig(path, "Studio");
+    check(loaded.collections.isEmpty(), "config with invalid per-tab size loads as default");
+}
+
+void testRemovedTabDropsItsSize(const QString &directory)
+{
+    // Sizes live on tabs: deleting a tab removes its size with it, and a
+    // deleted scene leaves no per-scene trace behind.
+    const QString path = directory + "/orphan.json";
+    WallConfig config;
+    config.collections = {collection(
+            "Studio", {tab(uuid('1'), {uuid('a')}, 224), tab(uuid('2'), {uuid('b')}, 120)})};
+    config.collections[0].collapsedScenes = {uuid('a'), uuid('b')};
+    check(saveWallConfig(config, path), "save two sized tabs");
+
+    WallConfig loaded = loadWallConfig(path);
+    CollectionConfig &active = loaded.collections[0];
+    active.tabs.removeAt(1); // user deletes the second tab
+    filterDeletedScenes(active, {uuid('a')}); // user deletes scene b from OBS
+    check(saveWallConfig(loaded, path), "save after tab and scene removal");
+
+    const WallConfig reloaded = loadWallConfig(path);
+    check(reloaded.collections.size() == 1, "collection survives removal");
+    if (reloaded.collections.size() == 1) {
+        check(reloaded.collections[0].tabs.size() == 1, "removed tab stays gone");
+        if (!reloaded.collections[0].tabs.isEmpty()) {
+            check(reloaded.collections[0].tabs[0].thumbSize == 224,
+                  "remaining tab keeps its own size");
+            check(reloaded.collections[0].tabs[0].scenes == QStringList{uuid('a')},
+                  "deleted scene removed from assignment");
+        }
+        check(reloaded.collections[0].collapsedScenes == QSet<QString>{uuid('a')},
+              "deleted scene collapse state removed");
     }
 }
 
@@ -207,7 +289,7 @@ void testUnsafeWritesDoNotReplaceConfig(const QString &directory)
     const QByteArray current = readFile(path);
 
     WallConfig invalidSize = revised;
-    invalidSize.thumbSize = 0;
+    invalidSize.collections[0].tabs[0].thumbSize = 0;
     check(!saveWallConfig(invalidSize, path), "reject invalid thumbnail size");
     check(readFile(path) == current, "invalid size leaves config untouched");
 
@@ -235,7 +317,15 @@ void testUnsafeWritesDoNotReplaceConfig(const QString &directory)
     check(readFile(emptyPath).isEmpty(), "empty source config remains untouched");
 
     QJsonObject invalidSizeRoot = QJsonDocument::fromJson(original).object();
-    invalidSizeRoot["thumbSize"] = 401;
+    QJsonArray invalidSizeCollections = invalidSizeRoot["collections"].toArray();
+    QJsonObject invalidSizeCollection = invalidSizeCollections[0].toObject();
+    QJsonArray invalidSizeTabs = invalidSizeCollection["tabs"].toArray();
+    QJsonObject invalidSizeTab = invalidSizeTabs[0].toObject();
+    invalidSizeTab["thumbSize"] = 401;
+    invalidSizeTabs[0] = invalidSizeTab;
+    invalidSizeCollection["tabs"] = invalidSizeTabs;
+    invalidSizeCollections[0] = invalidSizeCollection;
+    invalidSizeRoot["collections"] = invalidSizeCollections;
     const QString invalidSizePath = directory + "/invalid-size.json";
     const QByteArray invalidSizeSource = QJsonDocument(invalidSizeRoot).toJson();
     writeFile(invalidSizePath, invalidSizeSource);
@@ -272,6 +362,9 @@ int main(int argc, char **argv)
     testRoundTripAndCollectionIsolation(directory.path());
     testRenameKeepsSceneUuid(directory.path());
     testLegacyNameMigration(directory.path());
+    testV3GlobalSizeMigratesToTabs(directory.path());
+    testInvalidPerTabSizeRejected(directory.path());
+    testRemovedTabDropsItsSize(directory.path());
     testBareArrayMigration(directory.path());
     testDeletedSceneFiltering();
     testEmptySnapshotPreservesAssignments();

@@ -30,8 +30,11 @@ FEATURES
   so game capture, display/window capture, browser and media sources stay
   live even when the scene is neither in Preview nor Program.
 - Wrapping layout - thumbnails and collapsed bars reflow like a flex container.
+- Per-tab thumbnail size - each tab keeps its own size, set with the Size
+  slider or with a single Autosize click; switching tabs moves the slider to
+  the active tab's size. Saved between sessions.
 - Autosize - computes the largest size that fits every scene of the current tab
-  in the visible area, then applies it to all tabs. Collapsed bars count as
+  in the visible area, then applies it to that tab. Collapsed bars count as
   narrower, so packing stays efficient.
 - Realtime mode - refreshes at the frame rate OBS is currently running at, after
   a resource-usage confirmation.
@@ -52,7 +55,8 @@ MOUSE AND KEYBOARD
 - Left drag on a thumbnail: reorder it inside the current tab.
 - Right click on a scene header: collapse / expand that scene.
 - Right click on a thumbnail: in Studio Mode set it as the Preview scene.
-  A plain right-click never opens a menu.
+  A plain right-click on a thumbnail never opens a menu.
+- Right click on empty panel area: small menu with Add scene and About.
 - CTRL + click on a thumbnail: plugin menu (Assign to Tab, Remove from Tab,
   Collapse / Expand, Filters, Rename, Add scene).
 
@@ -125,7 +129,7 @@ public:
             "SOFTWARE.");
         layout->addWidget(license);
 
-        QLabel *credits = new QLabel("Studio Krause / Tencent Hy4 Preview", this);
+        QLabel *credits = new QLabel("Studio Krause / Tencent Hy4 Preview / Muse Spark 1.3", this);
         credits->setAlignment(Qt::AlignCenter);
         layout->addWidget(credits);
 
