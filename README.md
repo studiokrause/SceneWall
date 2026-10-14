@@ -68,7 +68,7 @@ SceneWall only shows scenes and switches between them. It does not control sourc
 | **Left drag** on a thumbnail | Reorder it inside the current tab |
 | **Right click** on a scene header | Collapse / expand that scene |
 | **Right click** on a thumbnail | In Studio Mode, set it as the Preview scene. A plain right-click never opens a menu |
-| **CTRL + click** on a thumbnail | Plugin menu: *Assign to Tab*, *Remove from Tab*, *Collapse / Expand*, *Properties* |
+| **CTRL + click** on a thumbnail | Plugin menu: *Assign to Tab*, *Remove from Tab*, *Collapse / Expand*, *Filters*, *Rename*, *Add scene* |
 
 ## Tabs and assignment
 
@@ -128,7 +128,7 @@ The resulting `build/Release/SceneWall.dll` is the plugin. `cmake --install buil
 
 ## Version
 
-The current version is **1.4**.
+The current version is **1.5**.
 
 ## License
 

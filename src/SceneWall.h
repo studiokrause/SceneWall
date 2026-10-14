@@ -155,6 +155,8 @@ private slots:
     void onTabMoved(int from, int to);
     void onSceneDropped(const QString &sceneUuid, int index);
     void onSceneMenu(SceneThumbnailWidget *widget, QPoint globalPos);
+    void renameScene(const QString &oldName);
+    void addScene();
     void onRealtimeToggled(bool on);
     void onCollapseToggled(const QString &sceneUuid, bool collapsed);
     void reloadFromObs();

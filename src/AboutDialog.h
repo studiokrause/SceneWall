@@ -54,7 +54,7 @@ MOUSE AND KEYBOARD
 - Right click on a thumbnail: in Studio Mode set it as the Preview scene.
   A plain right-click never opens a menu.
 - CTRL + click on a thumbnail: plugin menu (Assign to Tab, Remove from Tab,
-  Collapse / Expand, Properties).
+  Collapse / Expand, Filters, Rename, Add scene).
 
 TABS AND ASSIGNMENT
 - The All tab always shows every scene; its title can be renamed and cannot be

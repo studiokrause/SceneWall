@@ -7,6 +7,7 @@
 #include <QFontMetrics>
 #include <QList>
 #include <QMap>
+#include <QInputDialog>
 #include <QMenu>
 #include <QMimeData>
 #include <QMessageBox>
@@ -1032,10 +1033,62 @@ void SceneWallWidget::onSceneMenu(SceneThumbnailWidget *widget, QPoint globalPos
     menu.addAction(widget->collapsed() ? obs_module_text("Expand") : obs_module_text("Collapse"),
                    [widget]() { widget->setCollapsed(!widget->collapsed()); });
 
-    menu.addAction(obs_module_text("Properties"),
-                   [widget]() { obs_frontend_open_source_properties(widget->sourcePointer()); });
+    menu.addAction(obs_module_text("Filters"),
+                   [widget]() { obs_frontend_open_source_filters(widget->sourcePointer()); });
+
+    menu.addAction(obs_module_text("Rename"),
+                   [this, name = widget->sceneName()]() { renameScene(name); });
+
+    menu.addSeparator();
+
+    menu.addAction(obs_module_text("AddScene"), [this]() { addScene(); });
 
     menu.exec(globalPos);
+}
+
+void SceneWallWidget::renameScene(const QString &oldName)
+{
+    bool ok = false;
+    const QString newName =
+        QInputDialog::getText(this, obs_module_text("Rename"), obs_module_text("Name"),
+                              QLineEdit::Normal, oldName, &ok)
+            .trimmed();
+    if (!ok || newName.isEmpty() || newName == oldName)
+        return;
+
+    obs_source_t *existing = obs_get_source_by_name(newName.toUtf8().constData());
+    if (existing) {
+        obs_source_release(existing);
+        QMessageBox::warning(this, obs_module_text("Rename"), obs_module_text("NameExists"));
+        return;
+    }
+
+    obs_source_t *source = obs_get_source_by_name(oldName.toUtf8().constData());
+    if (!source)
+        return;
+    obs_source_set_name(source, newName.toUtf8().constData());
+    obs_source_release(source);
+
+    // Assignments, order and collapse state are keyed by stable scene UUID,
+    // so a rename needs no config migration.
+    loadTabs();
+}
+
+void SceneWallWidget::addScene()
+{
+    QString name = "Scene";
+    for (int n = 2;; ++n) {
+        obs_source_t *existing = obs_get_source_by_name(name.toUtf8().constData());
+        if (!existing)
+            break;
+        obs_source_release(existing);
+        name = QString("Scene %1").arg(n);
+    }
+
+    obs_scene_t *scene = obs_scene_create(name.toUtf8().constData());
+    if (scene)
+        obs_scene_release(scene);
+    loadTabs();
 }
 
 void SceneWallWidget::onRealtimeToggled(bool on)
