@@ -1076,13 +1076,28 @@ void SceneWallWidget::renameScene(const QString &oldName)
 
 void SceneWallWidget::addScene()
 {
-    QString name = "Scene";
+    QString suggestion = "Scene";
     for (int n = 2;; ++n) {
-        obs_source_t *existing = obs_get_source_by_name(name.toUtf8().constData());
+        obs_source_t *existing = obs_get_source_by_name(suggestion.toUtf8().constData());
         if (!existing)
             break;
         obs_source_release(existing);
-        name = QString("Scene %1").arg(n);
+        suggestion = QString("Scene %1").arg(n);
+    }
+
+    bool ok = false;
+    const QString name =
+        QInputDialog::getText(this, obs_module_text("AddScene"), obs_module_text("Name"),
+                              QLineEdit::Normal, suggestion, &ok)
+            .trimmed();
+    if (!ok || name.isEmpty())
+        return;
+
+    obs_source_t *existing = obs_get_source_by_name(name.toUtf8().constData());
+    if (existing) {
+        obs_source_release(existing);
+        QMessageBox::warning(this, obs_module_text("AddScene"), obs_module_text("NameExists"));
+        return;
     }
 
     obs_scene_t *scene = obs_scene_create(name.toUtf8().constData());
