@@ -51,6 +51,8 @@ struct WallConfig {
 
     int version = CURRENT_VERSION;
     bool realtime = true;
+    // Left click cues Preview (Studio Mode); right click opens the scene menu.
+    bool clickToPreview = false;
     QList<CollectionConfig> collections;
 
     int indexOfCollection(const QString &collectionId) const
@@ -295,6 +297,11 @@ inline bool parseConfig(const QByteArray &raw, const QString &legacyCollectionId
                     return false;
                 config.realtime = root.value("realtime").toBool();
             }
+            if (root.contains("clickToPreview")) {
+                if (!root.value("clickToPreview").isBool())
+                    return false;
+                config.clickToPreview = root.value("clickToPreview").toBool();
+            }
         } else if (version == 3) {
             // v3 stored one global thumbSize: every tab inherits it on upgrade.
             int legacyThumbSize = 160;
@@ -339,6 +346,11 @@ inline bool parseConfig(const QByteArray &raw, const QString &legacyCollectionId
                     return false;
                 config.realtime = root.value("realtime").toBool();
             }
+            if (root.contains("clickToPreview")) {
+                if (!root.value("clickToPreview").isBool())
+                    return false;
+                config.clickToPreview = root.value("clickToPreview").toBool();
+            }
         } else if (version == 2) {
             if (!root.value("tabs").isArray())
                 return false;
@@ -361,6 +373,11 @@ inline bool parseConfig(const QByteArray &raw, const QString &legacyCollectionId
                 if (!root.value("realtime").isBool())
                     return false;
                 config.realtime = root.value("realtime").toBool();
+            }
+            if (root.contains("clickToPreview")) {
+                if (!root.value("clickToPreview").isBool())
+                    return false;
+                config.clickToPreview = root.value("clickToPreview").toBool();
             }
         } else {
             return false;
@@ -419,6 +436,7 @@ inline QByteArray serialize(const WallConfig &config)
     QJsonObject root;
     root["version"] = WallConfig::CURRENT_VERSION;
     root["realtime"] = config.realtime;
+    root["clickToPreview"] = config.clickToPreview;
     root["collections"] = collections;
     return QJsonDocument(root).toJson(QJsonDocument::Indented);
 }

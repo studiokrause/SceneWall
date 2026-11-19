@@ -3,6 +3,8 @@
 #include "SettingsDialog.h"
 
 #include <QDrag>
+#include <QGuiApplication>
+#include <QScreen>
 #include <QApplication>
 #include <QEvent>
 #include <QFontMetrics>
@@ -24,6 +26,7 @@
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 #include <obs.h>
+#include <obs.hpp>
 #include <obs-source.h>
 #include <util/bmem.h>
 #include <util/c99defs.h>
@@ -415,6 +418,12 @@ void SceneThumbnailWidget::mousePressEvent(QMouseEvent *event)
             setCollapsed(!isCollapsed);
             return;
         }
+        // Click-to-Preview mode: right click opens the scene menu
+        // (Send to Program, Filters, Rename).
+        if (clickToPreview) {
+            emit quickMenuRequested(this, event->globalPosition().toPoint());
+            return;
+        }
         if (obs_frontend_preview_program_mode_active()) {
             obs_frontend_set_current_preview_scene(source);
             return;
@@ -422,7 +431,7 @@ void SceneThumbnailWidget::mousePressEvent(QMouseEvent *event)
         return;
     }
 
-    // Left press only arms a potential drag; Program switches on release.
+    // Left press only arms a potential drag; the scene switches on release.
 }
 
 void SceneThumbnailWidget::mouseMoveEvent(QMouseEvent *event)
@@ -448,7 +457,7 @@ void SceneThumbnailWidget::mouseMoveEvent(QMouseEvent *event)
 void SceneThumbnailWidget::mouseReleaseEvent(QMouseEvent *event)
 {
     // Press already handled right button and CTRL+click; release only
-    // switches Program for a plain left click that never became a drag.
+    // switches scenes for a plain left click that never became a drag.
     if (event->button() != Qt::LeftButton)
         return;
     if (event->modifiers() & Qt::ControlModifier)
@@ -456,7 +465,13 @@ void SceneThumbnailWidget::mouseReleaseEvent(QMouseEvent *event)
     if (dragStarted)
         return;
 
-    obs_frontend_set_current_scene(source);
+    // Click-to-Preview mode in Studio Mode: a left click cues the scene in
+    // Preview; Program changes only through the transition. Without Studio
+    // Mode there is no Preview, so the click always switches Program.
+    if (clickToPreview && obs_frontend_preview_program_mode_active())
+        obs_frontend_set_current_preview_scene(source);
+    else
+        obs_frontend_set_current_scene(source);
 }
 
 /* ------------------------------------------------------------------ */
@@ -563,6 +578,7 @@ SceneWallWidget::SceneWallWidget(QWidget *parent) : QDockWidget(parent)
     m_renderTimer = new QTimer(this);
     connect(m_renderTimer, &QTimer::timeout, this, &SceneWallWidget::onSchedulerTick);
 
+    SceneThumbnailWidget::clickToPreview = config.clickToPreview;
     loadTabs();
     updateIndicators();
 }
@@ -761,6 +777,8 @@ void SceneWallWidget::loadTabs()
             w->setThumbSize(tab.thumbSize);
             w->setBarColor(ownerColor.value(sceneUuid, allColor));
             connect(w, &SceneThumbnailWidget::menuRequested, this, &SceneWallWidget::onSceneMenu);
+            connect(w, &SceneThumbnailWidget::quickMenuRequested, this,
+                    &SceneWallWidget::onSceneQuickMenu);
             connect(w, &SceneThumbnailWidget::collapseToggled, this,
                     &SceneWallWidget::onCollapseToggled);
             container->flowLayout()->addWidget(w);
@@ -1046,6 +1064,136 @@ void SceneWallWidget::removeSceneFromTab(const QString &sceneUuid, const QString
     loadTabs();
 }
 
+// Filters copied with "Copy Filters"; weak so a deleted scene is detected.
+static obs_weak_source_t *copiedFiltersSource = nullptr;
+
+void SceneWallWidget::onSceneQuickMenu(SceneThumbnailWidget *widget, QPoint globalPos)
+{
+    if (!widget)
+        return;
+
+    // Hold our own reference: actions like Remove rebuild the wall and may
+    // delete the widget while the menu is still running.
+    obs_source_t *source = obs_source_get_ref(widget->sourcePointer());
+    if (!source)
+        return;
+    const QString name = widget->sceneName();
+
+    QMenu menu;
+    menu.addAction(obs_module_text("SendToProgram"),
+                   [source]() { obs_frontend_set_current_scene(source); });
+    menu.addSeparator();
+
+    // Mirrors the context menu of OBS's own Scenes dock.
+    menu.addAction(obs_module_text("AddScene"), [this]() { addScene(); });
+    menu.addAction(obs_module_text("Duplicate"), [this, source]() { duplicateScene(source); });
+    menu.addAction(obs_module_text("Rename"), [this, name]() { renameScene(name); });
+    menu.addAction(obs_module_text("Remove"), [this, source]() { removeScene(source); });
+    menu.addSeparator();
+
+    menu.addAction(obs_module_text("Filters"),
+                   [source]() { obs_frontend_open_source_filters(source); });
+    menu.addAction(obs_module_text("CopyFilters"), [source]() {
+        obs_weak_source_release(copiedFiltersSource);
+        copiedFiltersSource = obs_source_get_weak_source(source);
+    });
+    QAction *paste = menu.addAction(obs_module_text("PasteFilters"), [source]() {
+        obs_source_t *from = obs_weak_source_get_source(copiedFiltersSource);
+        if (from && from != source)
+            obs_source_copy_filters(source, from);
+        obs_source_release(from);
+    });
+    paste->setEnabled(copiedFiltersSource && !obs_weak_source_expired(copiedFiltersSource) &&
+                      !obs_weak_source_references_source(copiedFiltersSource, source));
+    menu.addSeparator();
+
+    QMenu *fullscreen = menu.addMenu(obs_module_text("FullscreenProjector"));
+    const QList<QScreen *> screens = QGuiApplication::screens();
+    for (int i = 0; i < screens.size(); ++i) {
+        const QRect g = screens[i]->geometry();
+        const QString label = QString("%1 %2: %3x%4 @ %5,%6")
+                                  .arg(obs_module_text("Display"))
+                                  .arg(i + 1)
+                                  .arg(g.width())
+                                  .arg(g.height())
+                                  .arg(g.x())
+                                  .arg(g.y());
+        fullscreen->addAction(label, [i, name]() {
+            obs_frontend_open_projector("Scene", i, nullptr, name.toUtf8().constData());
+        });
+    }
+    menu.addAction(obs_module_text("WindowedProjector"), [name]() {
+        obs_frontend_open_projector("Scene", -1, nullptr, name.toUtf8().constData());
+    });
+    menu.addAction(obs_module_text("Screenshot"),
+                   [source]() { obs_frontend_take_source_screenshot(source); });
+    menu.addSeparator();
+
+    // Same private setting OBS uses; the Multiview picks it up when it is
+    // next rebuilt (reopened or the scene list changes).
+    QAction *multiview = menu.addAction(obs_module_text("ShowInMultiview"));
+    multiview->setCheckable(true);
+    {
+        OBSDataAutoRelease priv = obs_source_get_private_settings(source);
+        obs_data_set_default_bool(priv, "show_in_multiview", true);
+        multiview->setChecked(obs_data_get_bool(priv, "show_in_multiview"));
+    }
+    connect(multiview, &QAction::toggled, this, [source](bool on) {
+        OBSDataAutoRelease priv = obs_source_get_private_settings(source);
+        obs_data_set_bool(priv, "show_in_multiview", on);
+    });
+
+    menu.exec(globalPos);
+    obs_source_release(source);
+}
+
+void SceneWallWidget::duplicateScene(obs_source_t *source)
+{
+    const QString base = QString::fromUtf8(obs_source_get_name(source));
+    QString suggestion;
+    for (int n = 2;; ++n) {
+        suggestion = QString("%1 %2").arg(base).arg(n);
+        obs_source_t *existing = obs_get_source_by_name(suggestion.toUtf8().constData());
+        if (!existing)
+            break;
+        obs_source_release(existing);
+    }
+
+    bool ok = false;
+    const QString name =
+        QInputDialog::getText(this, obs_module_text("Duplicate"), obs_module_text("Name"),
+                              QLineEdit::Normal, suggestion, &ok)
+            .trimmed();
+    if (!ok || name.isEmpty())
+        return;
+
+    obs_source_t *existing = obs_get_source_by_name(name.toUtf8().constData());
+    if (existing) {
+        obs_source_release(existing);
+        QMessageBox::warning(this, obs_module_text("Duplicate"), obs_module_text("NameExists"));
+        return;
+    }
+
+    obs_scene_t *scene = obs_scene_from_source(source);
+    if (!scene)
+        return;
+    obs_scene_t *copy = obs_scene_duplicate(scene, name.toUtf8().constData(), OBS_SCENE_DUP_REFS);
+    obs_scene_release(copy);
+    loadTabs();
+}
+
+void SceneWallWidget::removeScene(obs_source_t *source)
+{
+    const QString name = QString::fromUtf8(obs_source_get_name(source));
+    const auto answer = QMessageBox::question(
+        this, obs_module_text("Remove"),
+        QString::fromUtf8(obs_module_text("ConfirmRemove")).arg(name),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (answer != QMessageBox::Yes)
+        return;
+    obs_source_remove(source);
+}
+
 void SceneWallWidget::onSceneMenu(SceneThumbnailWidget *widget, QPoint globalPos)
 {
     if (!widget)
@@ -1275,6 +1423,7 @@ void SceneWallWidget::openSettings()
         // The dialog has already written its own changes, so re-read them
         // instead of clobbering them with our stale in-memory copy.
         config = loadWallConfig();
+        SceneThumbnailWidget::clickToPreview = config.clickToPreview;
         loadTabs();
     }
 }

@@ -113,8 +113,12 @@ public:
     static constexpr int HEADER_HEIGHT = 22;
     static constexpr int COLLAPSED_WIDTH = 30;
 
+    // Mirrors WallConfig::clickToPreview; set by SceneWallWidget.
+    static inline bool clickToPreview = false;
+
 signals:
     void menuRequested(SceneThumbnailWidget *widget, QPoint globalPos);
+    void quickMenuRequested(SceneThumbnailWidget *widget, QPoint globalPos);
     void collapseToggled(const QString &sceneUuid, bool collapsed);
 
 protected:
@@ -163,6 +167,9 @@ private slots:
     void onTabChanged(int index);
     void onSceneDropped(const QString &sceneUuid, int index);
     void onSceneMenu(SceneThumbnailWidget *widget, QPoint globalPos);
+    void onSceneQuickMenu(SceneThumbnailWidget *widget, QPoint globalPos);
+    void duplicateScene(obs_source_t *source);
+    void removeScene(obs_source_t *source);
     void onEmptyAreaMenu(QPoint globalPos);
     void renameScene(const QString &oldName);
     void addScene();

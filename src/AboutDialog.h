@@ -51,7 +51,7 @@ FEATURES
 - Localization: English, German, Polish, Ukrainian, Italian, Spanish, French.
 
 MOUSE AND KEYBOARD
-- Left click on a thumbnail: switch to that scene.
+- Left click on a thumbnail: switch to that scene (or Preview, see Settings).
 - Left drag on a thumbnail: reorder it inside the current tab.
 - Right click on a scene header: collapse / expand that scene.
 - Right click on a thumbnail: in Studio Mode set it as the Preview scene.

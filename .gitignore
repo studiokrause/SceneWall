@@ -8,3 +8,4 @@ build/
 .vs/
 CMakeFiles/
 CMakeCache.txt
+.deps/

@@ -1,6 +1,7 @@
 #pragma once
 #include "Config.h"
 
+#include <QCheckBox>
 #include <QColor>
 #include <QDialog>
 #include <QPushButton>
@@ -13,6 +14,7 @@ public:
 
 private:
     QTableWidget *tabTable;
+    QCheckBox *clickToPreviewBox;
     WallConfig config;
     QString collectionId;
 

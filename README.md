@@ -76,10 +76,10 @@ SceneWall only shows scenes and switches between them. It does not control sourc
 
 | Action | Result |
 | --- | --- |
-| **Left click** on a thumbnail | Switch to that scene |
+| **Left click** on a thumbnail | Switch Program to that scene. With *Left click sends to Preview* enabled in Settings and Studio Mode on, cue it in Preview instead |
 | **Left drag** on a thumbnail | Reorder it inside the current tab |
 | **Right click** on a scene header | Collapse / expand that scene |
-| **Right click** on a thumbnail | In Studio Mode, set it as the Preview scene. A plain right-click on a thumbnail never opens a menu |
+| **Right click** on a thumbnail | In Studio Mode, set it as the Preview scene. With *Left click sends to Preview* enabled: open a menu with *Send to Program* plus the OBS Scenes-dock entries: *Add scene*, *Duplicate*, *Rename*, *Remove*, *Filters*, *Copy / Paste Filters*, *Fullscreen / Windowed Projector*, *Screenshot*, *Show in Multiview* |
 | **Right click** on an empty panel area | Small menu: *Add scene*, *About* |
 | **CTRL + click** on a thumbnail | Plugin menu: *Assign to Tab*, *Remove from Tab*, *Collapse / Expand*, *Filters*, *Rename*, *Add scene* |
 
@@ -138,6 +138,16 @@ cmake --build build --config Release
 `OBS_QT_CMAKE_DIR` is optional; when given it is appended to `CMAKE_PREFIX_PATH`. Without it, CMake uses the Qt6 package from the default search path.
 
 The resulting `build/Release/scene-wall.dll` is the plugin. `cmake --install build --config Release` installs the OBS 34 bundle layout: `scene-wall.dll` next to `data/locale/*.ini` under `plugins/scene-wall`.
+
+### macOS
+
+Requirements: Xcode command line tools, OBS.app in `/Applications`, and `brew install cmake ninja simde`.
+
+```bash
+./build-macos.sh --install
+```
+
+The script clones the obs-studio headers at the tag matching your installed OBS and downloads OBS's own pre-built Qt6 (hash-verified) into `.deps/`. It then builds `build/scene-wall.plugin` and, with `--install`, copies it to `~/Library/Application Support/obs-studio/plugins/`. The plugin links libobs, obs-frontend-api and Qt from OBS.app at runtime. Don't build against a Homebrew Qt, which may be newer than the Qt shipped in OBS.
 
 ## Version
 

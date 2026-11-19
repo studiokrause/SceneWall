@@ -4,6 +4,7 @@
 #include <QColorDialog>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QLabel>
 #include <QMessageBox>
 #include <QSizePolicy>
 #include <QTableWidgetItem>
@@ -38,6 +39,18 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent)
     tabTable->setSelectionMode(QAbstractItemView::SingleSelection);
     tabTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     mainLayout->addWidget(tabTable);
+
+    clickToPreviewBox = new QCheckBox(obs_module_text("ClickToPreview"), this);
+    clickToPreviewBox->setToolTip(obs_module_text("ClickToPreviewTip"));
+    clickToPreviewBox->setChecked(config.clickToPreview);
+    mainLayout->addWidget(clickToPreviewBox);
+
+    // Small hint under the checkbox so the right-click menu is discoverable.
+    QLabel *clickToPreviewHint = new QLabel(obs_module_text("ClickToPreviewTip"), this);
+    clickToPreviewHint->setWordWrap(true);
+    clickToPreviewHint->setStyleSheet("QLabel { color: palette(placeholder-text); font-size: 11px; "
+                                      "margin-left: 20px; }");
+    mainLayout->addWidget(clickToPreviewHint);
 
     QHBoxLayout *btnLayout = new QHBoxLayout();
     QPushButton *addBtn = new QPushButton(obs_module_text("AddTab"), this);
@@ -187,6 +200,7 @@ void SettingsDialog::saveSettings()
     }
 
     collection.tabs = updated;
+    config.clickToPreview = clickToPreviewBox->isChecked();
     // Stay open on failure so the user's edits are not silently discarded.
     if (!saveWallConfig(config)) {
         QMessageBox::warning(this, tr("SceneWall"),
