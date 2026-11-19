@@ -139,6 +139,16 @@ cmake --build build --config Release
 
 The resulting `build/Release/scene-wall.dll` is the plugin. `cmake --install build --config Release` installs the OBS 34 bundle layout: `scene-wall.dll` next to `data/locale/*.ini` under `plugins/scene-wall`.
 
+### macOS
+
+Requirements: Xcode command line tools, OBS.app in `/Applications`, and `brew install cmake ninja simde`.
+
+```bash
+./build-macos.sh --install
+```
+
+The script clones the obs-studio headers at the tag matching your installed OBS and downloads OBS's own pre-built Qt6 (hash-verified) into `.deps/`. It then builds `build/scene-wall.plugin` and, with `--install`, copies it to `~/Library/Application Support/obs-studio/plugins/`. The plugin links libobs, obs-frontend-api and Qt from OBS.app at runtime. Don't build against a Homebrew Qt, which may be newer than the Qt shipped in OBS.
+
 ## Version
 
 The current version is **1.7**.
